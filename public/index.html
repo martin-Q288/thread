@@ -1,0 +1,27 @@
+
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MANMO</title>
+<style>
+body{font-family:system-ui;margin:0;background:#f6f7fb;color:#111;padding:24px}.wrap{max-width:1100px;margin:auto}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.card{background:#fff;border:1px solid #e8e8ef;border-radius:16px;padding:16px;margin-bottom:14px}.num{font-size:28px;font-weight:800}.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}input,textarea,button{width:100%;box-sizing:border-box;padding:11px;margin-top:8px;border:1px solid #ddd;border-radius:10px}button{background:#111;color:#fff;font-weight:700}pre{white-space:pre-wrap;background:#111;color:#eee;padding:12px;border-radius:10px}@media(max-width:760px){.row{grid-template-columns:1fr}}
+</style></head><body><div class="wrap"><h1>MANMO Revenue Engine</h1><p>Threads × Toss Share 자동화 MVP · 월 목표 20,000,000원</p>
+<div id="stats" class="grid"></div>
+<div class="row">
+<div class="card"><h3>상품 추가</h3><input id="n" placeholder="상품명"><input id="c" placeholder="카테고리"><input id="p" type="number" placeholder="가격"><textarea id="d" placeholder="특징"></textarea><input id="u" placeholder="토스 쉐어링크"><button onclick="save()">저장</button><button onclick="mock()">Mock 상품</button></div>
+<div class="card"><h3>Winning Hook</h3><div id="winning">성과 데이터가 쌓이면 표시됩니다.</div></div>
+</div>
+<div class="card"><h3>상품</h3><div id="products"></div></div>
+<div class="card"><h3>게시물</h3><div id="posts"></div></div>
+</div>
+<script>
+async function A(url,o={}){let r=await fetch(url,{headers:{"Content-Type":"application/json"},...o});return r.json()}
+async function refresh(){
+let s=await A("/api/dashboard"),arr=[["상품",s.products],["게시물",s.posts],["벤치마크",s.benchmarks],["조회",s.views],["댓글",s.comments],["클릭",s.clicks],["주문",s.orders],["추적매출",Number(s.revenue).toLocaleString()+"원"],["예상수익",Number(s.estimatedIncome).toLocaleString()+"원"]];
+stats.innerHTML=arr.map(x=>`<div class="card"><div class="num">${x[1]}</div><small>${x[0]}</small></div>`).join("");
+let ps=await A("/api/products");products.innerHTML=ps.map(x=>`<div class="card"><b>${x.name}</b> · ${x.category||"-"} · ${Number(x.price||0).toLocaleString()}원<br>${x.description||""}<button onclick="draft(${x.id})">훅 20개 + 글 생성</button></div>`).join("")||"없음";
+let po=await A("/api/posts");posts.innerHTML=po.slice().reverse().map(x=>`<div class="card"><b>[${x.hook_type}] ${x.hook}</b><pre>${x.body}</pre><pre>${x.first_comment}</pre><button onclick="pub(${x.id})">${x.status.startsWith("published")?"Mock 게시 완료":"Threads 게시(Mock)"}</button></div>`).join("")||"없음";
+}
+async function save(){await A("/api/products",{method:"POST",body:JSON.stringify({name:n.value,category:c.value,price:+p.value||0,description:d.value,toss_share_url:u.value})});refresh()}
+async function mock(){await A("/api/products/mock-import",{method:"POST"});refresh()}
+async function draft(id){await A(`/api/products/${id}/draft`,{method:"POST"});refresh()}
+async function pub(id){await A(`/api/posts/${id}/publish`,{method:"POST"});refresh()}
+refresh()
+</script></body></html>
