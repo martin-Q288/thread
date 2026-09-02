@@ -11,12 +11,8 @@ function manmo_load_env(string $file): void {
         $value = trim($value, "\"'");
 
         // Cloudways may disable putenv(), so keep values in PHP globals only.
-        if (!array_key_exists($key, $_ENV) || $_ENV[$key] === '') {
-            $_ENV[$key] = $value;
-        }
-        if (!array_key_exists($key, $_SERVER) || $_SERVER[$key] === '') {
-            $_SERVER[$key] = $value;
-        }
+        if (!array_key_exists($key, $_ENV) || $_ENV[$key] === '') $_ENV[$key] = $value;
+        if (!array_key_exists($key, $_SERVER) || $_SERVER[$key] === '') $_SERVER[$key] = $value;
     }
 }
 
@@ -24,13 +20,11 @@ manmo_load_env(dirname(__DIR__) . '/.env');
 
 function envv(string $key, ?string $default = null): ?string {
     $value = $_ENV[$key] ?? ($_SERVER[$key] ?? null);
-
     if (($value === null || $value === '') && function_exists('getenv')) {
         $fromEnv = getenv($key);
         if ($fromEnv !== false && $fromEnv !== '') $value = $fromEnv;
     }
-
-    return ($value === null || $value === '') ? $default : (string) $value;
+    return ($value === null || $value === '') ? $default : (string)$value;
 }
 
 function cfg(): array {
@@ -38,33 +32,37 @@ function cfg(): array {
     if ($config !== null) return $config;
 
     $config = [
-        'app_url' => rtrim((string) envv('APP_URL', 'https://manmo.neocarelab.co.kr'), '/'),
-        'admin_key' => (string) envv('MANMO_ADMIN_KEY', ''),
-        'timezone' => (string) envv('APP_TIMEZONE', 'Asia/Seoul'),
+        'app_url' => rtrim((string)envv('APP_URL', 'https://manmo.neocarelab.co.kr'), '/'),
+        'admin_key' => (string)envv('MANMO_ADMIN_KEY', ''),
+        'timezone' => (string)envv('APP_TIMEZONE', 'Asia/Seoul'),
         'threads' => [
-            'app_id' => (string) envv('THREADS_APP_ID', ''),
-            'app_secret' => (string) envv('THREADS_APP_SECRET', ''),
-            'redirect_uri' => (string) envv('THREADS_REDIRECT_URI', 'https://manmo.neocarelab.co.kr/auth/threads/callback.php'),
-            'user_id' => (string) envv('THREADS_USER_ID', ''),
-            'access_token' => (string) envv('THREADS_ACCESS_TOKEN', ''),
-            'auth_url' => (string) envv('THREADS_AUTH_URL', 'https://threads.net/oauth/authorize'),
-            'token_url' => (string) envv('THREADS_TOKEN_URL', 'https://graph.threads.net/oauth/access_token'),
-            'long_token_url' => (string) envv('THREADS_LONG_TOKEN_URL', 'https://graph.threads.net/access_token'),
-            'graph_base' => rtrim((string) envv('THREADS_GRAPH_BASE', 'https://graph.threads.net/v1.0'), '/'),
-            'scopes' => (string) envv('THREADS_SCOPES', 'threads_basic,threads_content_publish,threads_manage_replies,threads_read_replies,threads_manage_insights'),
+            'app_id' => (string)envv('THREADS_APP_ID', ''),
+            'app_secret' => (string)envv('THREADS_APP_SECRET', ''),
+            'redirect_uri' => (string)envv('THREADS_REDIRECT_URI', 'https://manmo.neocarelab.co.kr/auth/threads/callback.php'),
+            'user_id' => (string)envv('THREADS_USER_ID', ''),
+            'access_token' => (string)envv('THREADS_ACCESS_TOKEN', ''),
+            'auth_url' => (string)envv('THREADS_AUTH_URL', 'https://threads.net/oauth/authorize'),
+            'token_url' => (string)envv('THREADS_TOKEN_URL', 'https://graph.threads.net/oauth/access_token'),
+            'long_token_url' => (string)envv('THREADS_LONG_TOKEN_URL', 'https://graph.threads.net/access_token'),
+            'graph_base' => rtrim((string)envv('THREADS_GRAPH_BASE', 'https://graph.threads.net/v1.0'), '/'),
+            'scopes' => (string)envv('THREADS_SCOPES', 'threads_basic,threads_content_publish,threads_manage_replies,threads_read_replies,threads_manage_insights'),
         ],
         'toss' => [
-            'access_key' => (string) envv('TOSS_ACCESS_KEY', ''),
-            'secret_key' => (string) envv('TOSS_SECRET_KEY', ''),
-            'member_id' => (string) envv('TOSS_MEMBER_ID', ''),
-            'base_url' => rtrim((string) envv('TOSS_API_BASE_URL', ''), '/'),
-            'products_path' => (string) envv('TOSS_PRODUCTS_PATH', ''),
-            'sharelink_path' => (string) envv('TOSS_SHARELINK_PATH', ''),
+            'access_key' => (string)envv('TOSS_ACCESS_KEY', ''),
+            'secret_key' => (string)envv('TOSS_SECRET_KEY', ''),
+            // Toss docs call this publisherId. Keep TOSS_MEMBER_ID for backwards compatibility.
+            'publisher_id' => (string)envv('TOSS_PUBLISHER_ID', envv('TOSS_MEMBER_ID', '')),
+            'token_url' => (string)envv('TOSS_TOKEN_URL', 'https://oauth2.cert.toss.im/token'),
+            'base_url' => rtrim((string)envv('TOSS_API_BASE_URL', 'https://sharelink.toss.im'), '/'),
+            'scope' => (string)envv('TOSS_SCOPE', 'sharelink:read sharelink:write'),
+            'products_path' => (string)envv('TOSS_PRODUCTS_PATH', '/openapi/products/best-selling'),
+            'sharelink_path' => (string)envv('TOSS_SHARELINK_PATH', '/openapi/links'),
+            'health_path' => (string)envv('TOSS_HEALTH_PATH', '/openapi/health'),
         ],
         'schedule' => [
-            'start_hour' => (int) envv('POST_START_HOUR', '8'),
-            'end_hour' => (int) envv('POST_END_HOUR', '24'),
-            'max_daily' => (int) envv('DAILY_POST_LIMIT', '17'),
+            'start_hour' => (int)envv('POST_START_HOUR', '8'),
+            'end_hour' => (int)envv('POST_END_HOUR', '24'),
+            'max_daily' => (int)envv('DAILY_POST_LIMIT', '17'),
         ],
     ];
 
@@ -82,7 +80,7 @@ function require_admin(): void {
     $key = cfg()['admin_key'];
     if ($key === '') return;
     $provided = $_SERVER['HTTP_X_MANMO_KEY'] ?? ($_GET['key'] ?? '');
-    if (!hash_equals($key, (string) $provided)) {
+    if (!hash_equals($key, (string)$provided)) {
         http_response_code(401);
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode(['error' => 'unauthorized'], JSON_UNESCAPED_UNICODE);
