@@ -7,51 +7,51 @@ require_once dirname(__DIR__) . '/lib/toss.php';
 function manmo_collect_toss_products(string $source, int $targetCount, string $categoryId = '', string $startCursor = ''): array {
     $max = $source === 'today-deals' ? 30 : 100;
     $targetCount = max(1, min($max, $targetCount));
-    $cursor = $startCursor;
-    $items = [];
-    $lastSuccess = ['items'=>[], 'hasNext'=>false, 'nextCursor'=>null];
-    $category = null;
-    $seenCursors = [];
+    $query = ['size'=>$targetCount];
+    if ($startCursor !== '') $query['cursor'] = $startCursor;
 
-    while (count($items) < $targetCount) {
-        $query = ['size'=>1];
-        if ($cursor !== '') $query['cursor'] = $cursor;
-
-        if ($source === 'today-deals') {
-            $page = toss_today_deals($query);
-        } elseif ($source === 'category') {
-            if ($categoryId === '') throw new InvalidArgumentException('categoryId required');
-            $page = toss_category_best($categoryId, $query);
-        } else {
-            $page = toss_best_selling($query);
-        }
-
-        $success = is_array($page['success'] ?? null) ? $page['success'] : [];
-        $pageItems = is_array($success['items'] ?? null) ? $success['items'] : [];
-        foreach ($pageItems as $item) {
-            if (!is_array($item)) continue;
-            $items[] = $item;
-            if (count($items) >= $targetCount) break;
-        }
-
-        if ($category === null && is_array($success['category'] ?? null)) $category = $success['category'];
-        $lastSuccess = $success;
-        $hasNext = (bool)($success['hasNext'] ?? false);
-        $nextCursor = (string)($success['nextCursor'] ?? '');
-        if (!$hasNext || $nextCursor === '') break;
-        if (isset($seenCursors[$nextCursor])) break;
-        $seenCursors[$nextCursor] = true;
-        $cursor = $nextCursor;
-        usleep(150000);
+    if ($source === 'today-deals') return toss_today_deals($query);
+    if ($source === 'category') {
+        if ($categoryId === '') throw new InvalidArgumentException('categoryId required');
+        return toss_category_best($categoryId, $query);
     }
+    return toss_best_selling($query);
+}
 
-    $out = [
-        'items' => $items,
-        'hasNext' => (bool)($lastSuccess['hasNext'] ?? false),
-        'nextCursor' => $lastSuccess['nextCursor'] ?? null,
-    ];
-    if ($category !== null) $out['category'] = $category;
-    return ['resultType'=>'SUCCESS', 'success'=>$out];
+function manmo_extract_tacald(array $item): string {
+    foreach (['tacald','productId'] as $key) {
+        $v = trim((string)($item[$key] ?? ''));
+        if ($v !== '' && ctype_digit($v)) return $v;
+    }
+    $url = (string)($item['productUrl'] ?? '');
+    if (preg_match('~/t/(\d+)(?:[/?#]|$)~', $url, $m)) return $m[1];
+    return '';
+}
+
+function manmo_enrich_missing_tacalt_ids(array $items): array {
+    $need = [];
+    foreach ($items as $idx=>$item) {
+        if (!is_array($item)) continue;
+        if (trim((string)($item['tacaltItemId'] ?? '')) !== '') continue;
+        $tacald = manmo_extract_tacald($item);
+        if ($tacald !== '') $need[$tacald][] = $idx;
+    }
+    if (!$need) return $items;
+
+    foreach (array_chunk(array_keys($need), 30) as $chunk) {
+        $detail = toss_product_details_by_tacalds($chunk);
+        $detailItems = is_array($detail['success']['items'] ?? null) ? $detail['success']['items'] : [];
+        foreach ($detailItems as $d) {
+            if (!is_array($d)) continue;
+            $tacald = trim((string)($d['tacald'] ?? ''));
+            if ($tacald === '') $tacald = manmo_extract_tacald($d);
+            if ($tacald === '' || empty($need[$tacald])) continue;
+            foreach ($need[$tacald] as $idx) {
+                $items[$idx] = array_replace($items[$idx], $d);
+            }
+        }
+    }
+    return $items;
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_response(['error'=>'method_not_allowed'],405);
@@ -82,6 +82,7 @@ try {
 
     $items = $list['success']['items'] ?? [];
     if (!is_array($items)) $items = [];
+    $items = manmo_enrich_missing_tacalt_ids($items);
 
     $db = db_read();
     $existingIds = [];
@@ -96,6 +97,7 @@ try {
     $expired = 0;
 
     foreach ($items as $item) {
+        if (!is_array($item)) { $invalid++; continue; }
         $itemId = trim((string)($item['tacaltItemId'] ?? ''));
         if ($itemId === '') { $invalid++; continue; }
         if (isset($existingIds[$itemId])) { $duplicates++; continue; }
@@ -125,6 +127,7 @@ try {
         if ($reviews !== null) $descParts[] = '리뷰 ' . number_format((int)$reviews) . '개';
         if ($endAt !== '') $descParts[] = '특가 종료 ' . $endAt;
 
+        $description = is_array($item['description'] ?? null) ? $item['description'] : [];
         $row = db_insert('products', [
             'name' => trim((string)($item['displayName'] ?? ('Toss 상품 ' . $itemId))),
             'category' => $categoryName,
@@ -135,7 +138,10 @@ try {
             'toss_origin_url' => $originUrl,
             'product_url' => trim((string)($item['productUrl'] ?? '')),
             'thumbnail_url' => trim((string)($item['thumbnailUrl'] ?? '')),
+            'main_image_urls' => is_array($item['mainImageUrls'] ?? null) ? $item['mainImageUrls'] : [],
+            'detail_image_urls' => is_array($description['detailImageUrls'] ?? null) ? $description['detailImageUrls'] : [],
             'tacalt_item_id' => $itemId,
+            'tacald' => trim((string)($item['tacald'] ?? manmo_extract_tacald($item))),
             'rank' => (int)($item['rank'] ?? 0),
             'category_ids' => is_array($item['categoryIds'] ?? null) ? $item['categoryIds'] : [],
             'is_sold_out' => false,
