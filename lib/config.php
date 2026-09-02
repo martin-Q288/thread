@@ -6,7 +6,7 @@ function manmo_load_env(string $file): void {
     if (!is_file($file)) return;
     foreach (file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
         $line = trim($line);
-        if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) continue;
+        if ($line === '' || substr($line, 0, 1) === '#' || strpos($line, '=') === false) continue;
         [$key, $value] = array_map('trim', explode('=', $line, 2));
         $value = trim($value, "\"'");
         if (getenv($key) === false) {
@@ -70,7 +70,7 @@ function storage_path(string $file = ''): string {
 
 function require_admin(): void {
     $key = cfg()['admin_key'];
-    if ($key === '') return; // setup mode
+    if ($key === '') return;
     $provided = $_SERVER['HTTP_X_MANMO_KEY'] ?? ($_GET['key'] ?? '');
     if (!hash_equals($key, (string) $provided)) {
         http_response_code(401);
