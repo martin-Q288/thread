@@ -3,34 +3,9 @@
 declare(strict_types=1);
 require_once __DIR__ . '/config.php';
 
-function toss_headers(): array {
-    $t = cfg()['toss'];
-    return [
-        'Accept: application/json',
-        'Content-Type: application/json',
-        'X-Access-Key: ' . $t['access_key'],
-        'X-Secret-Key: ' . $t['secret_key'],
-        'X-Member-Id: ' . $t['member_id'],
-    ];
-}
-
-function toss_request(string $method, string $path, ?array $payload = null, array $query = []): array {
-    $t = cfg()['toss'];
-    if ($t['base_url'] === '') throw new RuntimeException('TOSS_API_BASE_URL missing');
-    if ($t['access_key'] === '' || $t['secret_key'] === '' || $t['member_id'] === '') {
-        throw new RuntimeException('Toss API credentials missing');
-    }
-    $url = $t['base_url'] . '/' . ltrim($path, '/');
-    if ($query) $url .= '?' . http_build_query($query);
+function toss_curl(string $url, array $opts): array {
     $ch = curl_init($url);
-    $opts = [
-        CURLOPT_CUSTOMREQUEST => strtoupper($method),
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER => toss_headers(),
-        CURLOPT_TIMEOUT => 30,
-    ];
-    if ($payload !== null) $opts[CURLOPT_POSTFIELDS] = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    curl_setopt_array($ch, $opts);
+    curl_setopt_array($ch, $opts + [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30]);
     $body = curl_exec($ch);
     $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     $error = curl_error($ch);
@@ -39,17 +14,96 @@ function toss_request(string $method, string $path, ?array $payload = null, arra
     if ($status < 200 || $status >= 300) {
         throw new RuntimeException('Toss API HTTP ' . $status . ' ' . ($error ?: (string)$body));
     }
-    return is_array($json) ? $json : ['raw' => $body];
+    if (!is_array($json)) throw new RuntimeException('Toss API invalid JSON response');
+    return $json;
+}
+
+function toss_token_state(): array {
+    $file = storage_path('toss_token.json');
+    if (!is_file($file)) return [];
+    $data = json_decode((string)file_get_contents($file), true);
+    return is_array($data) ? $data : [];
+}
+
+function toss_access_token(bool $forceRefresh = false): string {
+    $t = cfg()['toss'];
+    if ($t['access_key'] === '' || $t['secret_key'] === '') throw new RuntimeException('Toss API credentials missing');
+
+    $stored = toss_token_state();
+    if (!$forceRefresh && !empty($stored['access_token']) && (int)($stored['expires_at'] ?? 0) > time() + 120) {
+        return (string)$stored['access_token'];
+    }
+
+    $response = toss_curl($t['token_url'], [
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
+        CURLOPT_POSTFIELDS => http_build_query([
+            'grant_type' => 'client_credentials',
+            'client_id' => $t['access_key'],
+            'client_secret' => $t['secret_key'],
+            'scope' => $t['scope'],
+        ]),
+    ]);
+
+    $token = (string)($response['access_token'] ?? '');
+    if ($token === '') throw new RuntimeException('Toss access_token missing');
+    $expiresIn = max(300, (int)($response['expires_in'] ?? 3600));
+    $save = [
+        'access_token' => $token,
+        'scope' => $response['scope'] ?? $t['scope'],
+        'token_type' => $response['token_type'] ?? 'Bearer',
+        'expires_at' => time() + $expiresIn,
+        'created_at' => date(DATE_ATOM),
+    ];
+    file_put_contents(storage_path('toss_token.json'), json_encode($save, JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES), LOCK_EX);
+    return $token;
+}
+
+function toss_api_request(string $method, string $path, ?array $payload = null, array $query = [], bool $retry = true): array {
+    $t = cfg()['toss'];
+    $url = $t['base_url'] . '/' . ltrim($path, '/');
+    if ($query) $url .= '?' . http_build_query($query);
+    $token = toss_access_token(false);
+    $opts = [
+        CURLOPT_CUSTOMREQUEST => strtoupper($method),
+        CURLOPT_HTTPHEADER => [
+            'Accept: application/json',
+            'Authorization: Bearer ' . $token,
+        ],
+    ];
+    if ($payload !== null) {
+        $opts[CURLOPT_HTTPHEADER][] = 'Content-Type: application/json';
+        $opts[CURLOPT_POSTFIELDS] = json_encode($payload, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+    }
+    try {
+        $result = toss_curl($url, $opts);
+    } catch (RuntimeException $e) {
+        if ($retry && strpos($e->getMessage(), 'HTTP 401') !== false) {
+            toss_access_token(true);
+            return toss_api_request($method, $path, $payload, $query, false);
+        }
+        throw $e;
+    }
+    if (($result['resultType'] ?? 'SUCCESS') === 'FAIL') {
+        $err = $result['error'] ?? [];
+        throw new RuntimeException('Toss ' . ($err['errorCode'] ?? 'FAIL') . ' ' . ($err['message'] ?? 'request failed'));
+    }
+    return $result;
+}
+
+function toss_health(): array {
+    return toss_api_request('GET', cfg()['toss']['health_path']);
 }
 
 function toss_search_products(array $query = []): array {
-    $path = cfg()['toss']['products_path'];
-    if ($path === '') throw new RuntimeException('TOSS_PRODUCTS_PATH missing. Set it from the official Sharelink API guide.');
-    return toss_request('GET', $path, null, $query);
+    return toss_api_request('GET', cfg()['toss']['products_path'], null, $query);
 }
 
-function toss_create_sharelink(array $payload): array {
-    $path = cfg()['toss']['sharelink_path'];
-    if ($path === '') throw new RuntimeException('TOSS_SHARELINK_PATH missing. Set it from the official Sharelink API guide.');
-    return toss_request('POST', $path, $payload);
+function toss_create_sharelink(int|string $tacaltItemId): array {
+    $publisherId = cfg()['toss']['publisher_id'];
+    if ($publisherId === '') throw new RuntimeException('TOSS_PUBLISHER_ID/TOSS_MEMBER_ID missing');
+    return toss_api_request('POST', cfg()['toss']['sharelink_path'], [
+        'tacaltItemId' => is_numeric($tacaltItemId) ? (int)$tacaltItemId : $tacaltItemId,
+        'publisherId' => $publisherId,
+    ]);
 }
