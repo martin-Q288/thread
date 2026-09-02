@@ -3,17 +3,47 @@
 declare(strict_types=1);
 require_once __DIR__ . '/config.php';
 
+final class TossApiException extends RuntimeException {
+    public int $httpStatus;
+    public ?string $errorCode;
+    public ?int $retryAfter;
+    public function __construct(string $message, int $httpStatus = 0, ?string $errorCode = null, ?int $retryAfter = null) {
+        parent::__construct($message);
+        $this->httpStatus = $httpStatus;
+        $this->errorCode = $errorCode;
+        $this->retryAfter = $retryAfter;
+    }
+}
+
 function toss_curl(string $url, array $opts): array {
+    $headers = [];
     $ch = curl_init($url);
-    curl_setopt_array($ch, $opts + [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30]);
+    $base = [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_HEADERFUNCTION => static function($ch, string $line) use (&$headers): int {
+            $len = strlen($line);
+            $parts = explode(':', $line, 2);
+            if (count($parts) === 2) $headers[strtolower(trim($parts[0]))] = trim($parts[1]);
+            return $len;
+        },
+    ];
+    curl_setopt_array($ch, $opts + $base);
     $body = curl_exec($ch);
     $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     $error = curl_error($ch);
     curl_close($ch);
+
+    if ($body === false) throw new TossApiException('Toss network error: ' . $error, $status);
     $json = json_decode((string)$body, true);
-    if ($status < 200 || $status >= 300) throw new RuntimeException('Toss API HTTP ' . $status . ' ' . ($error ?: (string)$body));
-    if (!is_array($json)) throw new RuntimeException('Toss API invalid JSON response');
-    return $json;
+    $retryAfter = isset($headers['retry-after']) && ctype_digit((string)$headers['retry-after']) ? (int)$headers['retry-after'] : null;
+
+    if ($status < 200 || $status >= 300) {
+        $code = is_array($json) ? (string)($json['error']['errorCode'] ?? '') : '';
+        throw new TossApiException('Toss API HTTP ' . $status . ' ' . ($error ?: (string)$body), $status, $code !== '' ? $code : null, $retryAfter);
+    }
+    if (!is_array($json)) throw new TossApiException('Toss API invalid JSON response', $status);
+    return ['json'=>$json, 'status'=>$status, 'headers'=>$headers];
 }
 
 function toss_token_state(): array {
@@ -28,7 +58,8 @@ function toss_access_token(bool $forceRefresh = false): string {
     if ($t['access_key'] === '' || $t['secret_key'] === '') throw new RuntimeException('Toss API credentials missing');
     $stored = toss_token_state();
     if (!$forceRefresh && !empty($stored['access_token']) && (int)($stored['expires_at'] ?? 0) > time() + 120) return (string)$stored['access_token'];
-    $response = toss_curl($t['token_url'], [
+
+    $raw = toss_curl($t['token_url'], [
         CURLOPT_POST => true,
         CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
         CURLOPT_POSTFIELDS => http_build_query([
@@ -38,6 +69,7 @@ function toss_access_token(bool $forceRefresh = false): string {
             'scope' => $t['scope'],
         ]),
     ]);
+    $response = $raw['json'];
     $token = (string)($response['access_token'] ?? '');
     if ($token === '') throw new RuntimeException('Toss access_token missing');
     $expiresIn = max(300, (int)($response['expires_in'] ?? 3600));
@@ -51,7 +83,15 @@ function toss_access_token(bool $forceRefresh = false): string {
     return $token;
 }
 
-function toss_api_request(string $method, string $path, ?array $payload = null, array $query = [], bool $retry = true): array {
+function toss_is_nonretryable_code(?string $code): bool {
+    if (!$code) return false;
+    return $code === 'INVALID_ARGUMENT'
+        || $code === 'SHARELINK_OPENAPI_ACCESS_DENIED'
+        || $code === 'SHARELINK_OPENAPI_QUOTA_EXCEEDED'
+        || str_starts_with($code, 'OPENAPI_SUB_TAG_');
+}
+
+function toss_api_request(string $method, string $path, ?array $payload = null, array $query = [], int $attempt = 0): array {
     $t = cfg()['toss'];
     $url = $t['base_url'] . '/' . ltrim($path, '/');
     if ($query) $url .= '?' . http_build_query($query);
@@ -64,28 +104,46 @@ function toss_api_request(string $method, string $path, ?array $payload = null, 
         $opts[CURLOPT_HTTPHEADER][] = 'Content-Type: application/json';
         $opts[CURLOPT_POSTFIELDS] = json_encode($payload, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
     }
+
     try {
-        $result = toss_curl($url, $opts);
-    } catch (RuntimeException $e) {
-        if ($retry && strpos($e->getMessage(), 'HTTP 401') !== false) {
+        $raw = toss_curl($url, $opts);
+    } catch (TossApiException $e) {
+        if ($e->httpStatus === 401 && $attempt < 1) {
             toss_access_token(true);
-            return toss_api_request($method, $path, $payload, $query, false);
+            return toss_api_request($method, $path, $payload, $query, $attempt + 1);
+        }
+        if (($e->httpStatus === 429 || $e->httpStatus >= 500) && $attempt < 3) {
+            $wait = $e->retryAfter ?? min(8, 1 << $attempt);
+            sleep(max(1, $wait));
+            return toss_api_request($method, $path, $payload, $query, $attempt + 1);
         }
         throw $e;
     }
-    if (($result['resultType'] ?? 'SUCCESS') === 'FAIL') {
-        $err = $result['error'] ?? [];
-        throw new RuntimeException('Toss ' . ($err['errorCode'] ?? 'FAIL') . ' ' . ($err['message'] ?? 'request failed'));
+
+    $result = $raw['json'];
+    if (($result['resultType'] ?? '') === 'FAIL') {
+        $err = is_array($result['error'] ?? null) ? $result['error'] : [];
+        $code = (string)($err['errorCode'] ?? 'FAIL');
+        $reason = (string)($err['reason'] ?? $err['message'] ?? 'request failed');
+        throw new TossApiException('Toss ' . $code . ' ' . $reason, (int)$raw['status'], $code);
     }
+    if (($result['resultType'] ?? 'SUCCESS') !== 'SUCCESS') throw new TossApiException('Toss unexpected resultType', (int)$raw['status']);
     return $result;
 }
 
 function toss_health(): array { return toss_api_request('GET', cfg()['toss']['health_path']); }
 function toss_search_products(array $query = []): array { return toss_best_selling($query); }
-function toss_best_selling(array $query = []): array { return toss_api_request('GET', '/openapi/products/best-selling', null, $query); }
-function toss_today_deals(array $query = []): array { return toss_api_request('GET', '/openapi/products/today-deals', null, $query); }
+function toss_best_selling(array $query = []): array {
+    if (isset($query['size'])) $query['size'] = max(1, min(100, (int)$query['size']));
+    return toss_api_request('GET', '/openapi/products/best-selling', null, $query);
+}
+function toss_today_deals(array $query = []): array {
+    if (isset($query['size'])) $query['size'] = max(1, min(30, (int)$query['size']));
+    return toss_api_request('GET', '/openapi/products/today-deals', null, $query);
+}
 function toss_category_best(int|string $categoryId, array $query = []): array {
     if ((string)$categoryId === '') throw new RuntimeException('categoryId required');
+    if (isset($query['size'])) $query['size'] = max(1, min(100, (int)$query['size']));
     return toss_api_request('GET', '/openapi/products/best-categories/' . rawurlencode((string)$categoryId), null, $query);
 }
 
@@ -106,6 +164,10 @@ function toss_create_sharelink(int|string $tacaltItemId): array {
 }
 
 function toss_performance(string $fromDate, string $toDate, array $query = []): array {
+    $from = DateTimeImmutable::createFromFormat('Y-m-d', $fromDate);
+    $to = DateTimeImmutable::createFromFormat('Y-m-d', $toDate);
+    if (!$from || !$to || $fromDate > $toDate) throw new InvalidArgumentException('invalid performance date range');
+    if ($from->diff($to)->days > 30) throw new InvalidArgumentException('performance range maximum is 31 days inclusive');
     $q = ['fromDate'=>$fromDate, 'toDate'=>$toDate] + $query;
     if (isset($q['size'])) $q['size'] = max(1, min(100, (int)$q['size']));
     return toss_api_request('GET', cfg()['toss']['performance_path'], null, $q);
