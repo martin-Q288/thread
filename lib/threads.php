@@ -24,7 +24,7 @@ function http_post_form(string $url, array $fields, array $headers = []): array 
 }
 
 function http_get_json(string $url, array $query = []): array {
-    if ($query) $url .= (str_contains($url, '?') ? '&' : '?') . http_build_query($query);
+    if ($query) $url .= (strpos($url, '?') !== false ? '&' : '?') . http_build_query($query);
     $ch = curl_init($url);
     curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30]);
     $body = curl_exec($ch);
