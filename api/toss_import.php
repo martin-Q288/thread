@@ -3,6 +3,7 @@
 declare(strict_types=1);
 require_once dirname(__DIR__) . '/lib/db.php';
 require_once dirname(__DIR__) . '/lib/toss.php';
+require_once dirname(__DIR__) . '/lib/toss_collect.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_response(['error'=>'method_not_allowed'],405);
 require_admin();
@@ -13,25 +14,20 @@ $cursor = isset($body['cursor']) ? (string)$body['cursor'] : '';
 
 try {
     $health = toss_health();
-    $query = [];
-    if ($cursor !== '') $query['cursor'] = $cursor;
 
     if ($source === 'today-deals') {
         $size = max(1, min(30, (int)($body['size'] ?? 10)));
-        $query['size'] = $size;
-        $list = toss_today_deals($query);
+        $list = toss_collect_products('today-deals', $size, '', $cursor);
         $categoryName = '토스 하루특가';
     } elseif ($source === 'category') {
         if ($categoryId === '') json_response(['error'=>'category_id_required'],422);
         $size = max(1, min(100, (int)($body['size'] ?? 10)));
-        $query['size'] = $size;
-        $list = toss_category_best($categoryId, $query);
+        $list = toss_collect_products('category', $size, $categoryId, $cursor);
         $categoryName = trim((string)($list['success']['category']['displayName'] ?? ('카테고리 ' . $categoryId)));
     } else {
         $source = 'best-selling';
         $size = max(1, min(100, (int)($body['size'] ?? 10)));
-        $query['size'] = $size;
-        $list = toss_best_selling($query);
+        $list = toss_collect_products('best-selling', $size, '', $cursor);
         $categoryName = '토스 베스트';
     }
 
