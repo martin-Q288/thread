@@ -38,20 +38,52 @@ function http_get_json(string $url, array $query = []): array {
     return is_array($json) ? $json : ['raw' => $body];
 }
 
+function threads_save_token(array $token): void {
+    file_put_contents(storage_path('threads_auth.json'), json_encode($token, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX);
+}
+
 function threads_token_state(): array {
     $file = storage_path('threads_auth.json');
     $stored = is_file($file) ? json_decode((string)file_get_contents($file), true) : [];
+    if (!is_array($stored)) $stored = [];
     $cfg = cfg()['threads'];
-    return [
+
+    $state = [
         'access_token' => (string)($stored['access_token'] ?? $cfg['access_token'] ?? ''),
         'user_id' => (string)($stored['user_id'] ?? $cfg['user_id'] ?? ''),
         'expires_at' => $stored['expires_at'] ?? null,
         'username' => $stored['username'] ?? null,
     ];
-}
 
-function threads_save_token(array $token): void {
-    file_put_contents(storage_path('threads_auth.json'), json_encode($token, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX);
+    // Tokens entered directly in .env do not have a cached username yet.
+    // Resolve it once from Threads /me, then persist only the derived account metadata.
+    if (($state['username'] === null || $state['username'] === '') && $state['access_token'] !== '' && $state['user_id'] !== '') {
+        try {
+            $me = http_get_json($cfg['graph_base'] . '/me', [
+                'fields' => 'id,username',
+                'access_token' => $state['access_token'],
+            ]);
+            $resolvedId = (string)($me['id'] ?? '');
+            $resolvedUsername = (string)($me['username'] ?? '');
+            if ($resolvedId !== '' && $resolvedUsername !== '') {
+                $state['user_id'] = $resolvedId;
+                $state['username'] = $resolvedUsername;
+                $cached = [
+                    'user_id' => $resolvedId,
+                    'username' => $resolvedUsername,
+                    'expires_at' => $state['expires_at'],
+                    'updated_at' => date(DATE_ATOM),
+                ];
+                // Do not copy .env access tokens into a web-managed file unless one was already stored there.
+                if (!empty($stored['access_token'])) $cached['access_token'] = $stored['access_token'];
+                threads_save_token($cached);
+            }
+        } catch (Throwable $e) {
+            // Account metadata is cosmetic; token connectivity should still remain usable.
+        }
+    }
+
+    return $state;
 }
 
 function threads_authorize_url(): string {
