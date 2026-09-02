@@ -9,23 +9,29 @@ require_admin();
 $body = request_json();
 $source = (string)($body['source'] ?? 'best-selling');
 $categoryId = trim((string)($body['category_id'] ?? ''));
+$cursor = isset($body['cursor']) ? (string)$body['cursor'] : '';
 
 try {
     $health = toss_health();
+    $query = [];
+    if ($cursor !== '') $query['cursor'] = $cursor; // Opaque cursor: pass through unchanged.
 
     if ($source === 'today-deals') {
         $size = max(1, min(30, (int)($body['size'] ?? 10)));
-        $list = toss_today_deals(['size' => $size]);
+        $query['size'] = $size;
+        $list = toss_today_deals($query);
         $categoryName = '토스 하루특가';
     } elseif ($source === 'category') {
         if ($categoryId === '') json_response(['error'=>'category_id_required'],422);
         $size = max(1, min(100, (int)($body['size'] ?? 10)));
-        $list = toss_category_best($categoryId, ['size' => $size]);
+        $query['size'] = $size;
+        $list = toss_category_best($categoryId, $query);
         $categoryName = trim((string)($list['success']['category']['displayName'] ?? ('카테고리 ' . $categoryId)));
     } else {
         $source = 'best-selling';
         $size = max(1, min(100, (int)($body['size'] ?? 10)));
-        $list = toss_best_selling(['size' => $size]);
+        $query['size'] = $size;
+        $list = toss_best_selling($query);
         $categoryName = '토스 베스트';
     }
 
@@ -52,6 +58,8 @@ try {
             continue;
         }
 
+        // Link quota is counted only for newly issued links. Existing product IDs are skipped above,
+        // so we never waste quota re-issuing the same tacaltItemId + publisherId pair.
         $link = toss_create_sharelink($itemId);
         $linkData = $link['success'] ?? [];
         $shortUrl = trim((string)($linkData['shortUrl'] ?? ''));
@@ -59,7 +67,7 @@ try {
         if ($shortUrl === '' && $originUrl === '') throw new RuntimeException('Toss sharelink missing for item ' . $itemId);
 
         $discount = (float)($item['discountRate'] ?? 0);
-        $price = (int)($item['displayPrice'] ?? 0);
+        $price = (int)($item['displayPrice'] ?? 0); // Toss docs: shipping already included.
         $original = (int)($item['originalPrice'] ?? 0);
         $rating = $item['reviewScore'] ?? null;
         $reviews = $item['reviewCount'] ?? null;
@@ -78,11 +86,12 @@ try {
             'description' => implode(' · ', $descParts),
             'toss_share_url' => $shortUrl !== '' ? $shortUrl : $originUrl,
             'toss_origin_url' => $originUrl,
+            // Keep productUrl only as source metadata. Never publish it as an affiliate link.
             'product_url' => trim((string)($item['productUrl'] ?? '')),
             'thumbnail_url' => trim((string)($item['thumbnailUrl'] ?? '')),
             'tacalt_item_id' => $itemId,
             'rank' => (int)($item['rank'] ?? 0),
-            'category_ids' => $item['categoryIds'] ?? [],
+            'category_ids' => is_array($item['categoryIds'] ?? null) ? $item['categoryIds'] : [],
             'is_sold_out' => false,
             'end_at' => $endAt !== '' ? $endAt : null,
             'source' => 'toss_' . str_replace('-', '_', $source),
@@ -107,6 +116,8 @@ try {
         'next_cursor' => $list['success']['nextCursor'] ?? null,
         'products' => $imported,
     ]);
+} catch (TossApiException $e) {
+    json_response(['error'=>'toss_import_failed','message'=>$e->getMessage(),'error_code'=>$e->errorCode,'http_status'=>$e->httpStatus],500);
 } catch (Throwable $e) {
     json_response(['error'=>'toss_import_failed','message'=>$e->getMessage()],500);
 }
