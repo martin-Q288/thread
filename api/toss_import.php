@@ -14,7 +14,7 @@ $cursor = isset($body['cursor']) ? (string)$body['cursor'] : '';
 try {
     $health = toss_health();
     $query = [];
-    if ($cursor !== '') $query['cursor'] = $cursor; // Opaque cursor: pass through unchanged.
+    if ($cursor !== '') $query['cursor'] = $cursor;
 
     if ($source === 'today-deals') {
         $size = max(1, min(30, (int)($body['size'] ?? 10)));
@@ -45,12 +45,16 @@ try {
     }
 
     $imported = [];
-    $skipped = 0;
+    $duplicates = 0;
+    $soldOut = 0;
+    $invalid = 0;
     $expired = 0;
+
     foreach ($items as $item) {
-        $itemId = (string)($item['tacaltItemId'] ?? '');
-        if ($itemId === '' || isset($existingIds[$itemId])) { $skipped++; continue; }
-        if (!empty($item['isSoldOut'])) { $skipped++; continue; }
+        $itemId = trim((string)($item['tacaltItemId'] ?? ''));
+        if ($itemId === '') { $invalid++; continue; }
+        if (isset($existingIds[$itemId])) { $duplicates++; continue; }
+        if (!empty($item['isSoldOut'])) { $soldOut++; continue; }
 
         $endAt = trim((string)($item['endAt'] ?? ''));
         if ($endAt !== '' && strtotime($endAt) !== false && strtotime($endAt) <= time()) {
@@ -58,8 +62,6 @@ try {
             continue;
         }
 
-        // Link quota is counted only for newly issued links. Existing product IDs are skipped above,
-        // so we never waste quota re-issuing the same tacaltItemId + publisherId pair.
         $link = toss_create_sharelink($itemId);
         $linkData = $link['success'] ?? [];
         $shortUrl = trim((string)($linkData['shortUrl'] ?? ''));
@@ -67,7 +69,7 @@ try {
         if ($shortUrl === '' && $originUrl === '') throw new RuntimeException('Toss sharelink missing for item ' . $itemId);
 
         $discount = (float)($item['discountRate'] ?? 0);
-        $price = (int)($item['displayPrice'] ?? 0); // Toss docs: shipping already included.
+        $price = (int)($item['displayPrice'] ?? 0);
         $original = (int)($item['originalPrice'] ?? 0);
         $rating = $item['reviewScore'] ?? null;
         $reviews = $item['reviewCount'] ?? null;
@@ -86,7 +88,6 @@ try {
             'description' => implode(' · ', $descParts),
             'toss_share_url' => $shortUrl !== '' ? $shortUrl : $originUrl,
             'toss_origin_url' => $originUrl,
-            // Keep productUrl only as source metadata. Never publish it as an affiliate link.
             'product_url' => trim((string)($item['productUrl'] ?? '')),
             'thumbnail_url' => trim((string)($item['thumbnailUrl'] ?? '')),
             'tacalt_item_id' => $itemId,
@@ -110,7 +111,9 @@ try {
         'requested' => $size,
         'received' => count($items),
         'imported' => count($imported),
-        'skipped' => $skipped,
+        'duplicates' => $duplicates,
+        'sold_out' => $soldOut,
+        'invalid' => $invalid,
         'expired' => $expired,
         'has_next' => (bool)($list['success']['hasNext'] ?? false),
         'next_cursor' => $list['success']['nextCursor'] ?? null,
