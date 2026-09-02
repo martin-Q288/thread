@@ -96,7 +96,20 @@ function toss_health(): array {
 }
 
 function toss_search_products(array $query = []): array {
-    return toss_api_request('GET', cfg()['toss']['products_path'], null, $query);
+    return toss_api_request('GET', '/openapi/products/best-selling', null, $query);
+}
+
+function toss_best_selling(array $query = []): array {
+    return toss_api_request('GET', '/openapi/products/best-selling', null, $query);
+}
+
+function toss_today_deals(array $query = []): array {
+    return toss_api_request('GET', '/openapi/products/today-deals', null, $query);
+}
+
+function toss_category_best(int|string $categoryId, array $query = []): array {
+    if ((string)$categoryId === '') throw new RuntimeException('categoryId required');
+    return toss_api_request('GET', '/openapi/products/best-categories/' . rawurlencode((string)$categoryId), null, $query);
 }
 
 function toss_create_sharelink(int|string $tacaltItemId): array {
