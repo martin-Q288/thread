@@ -59,8 +59,7 @@ function toss_product_list_cache_valid(array $data): bool {
     $items = $data['success']['items'] ?? null;
     if (!is_array($items)) return false;
     if ($items === []) return true;
-    $first = $items[0] ?? null;
-    return is_array($first) && array_key_exists('tacaltItemId', $first) && (string)$first['tacaltItemId'] !== '';
+    return true;
 }
 
 function toss_token_state(): array {
@@ -138,7 +137,7 @@ function toss_health(): array { return toss_api_request('GET', cfg()['toss']['he
 function toss_search_products(array $query = []): array { return toss_best_selling($query); }
 function toss_best_selling(array $query = []): array {
     if (isset($query['size'])) $query['size'] = max(1, min(100, (int)$query['size']));
-    $key = 'v2:best-selling:' . json_encode($query);
+    $key = 'v3:best-selling:' . json_encode($query);
     if (($cached = toss_cache_get($key, 3600)) && toss_product_list_cache_valid($cached)) return $cached;
     $result = toss_api_request('GET', '/openapi/products/best-selling', null, $query);
     toss_cache_set($key, $result);
@@ -146,7 +145,7 @@ function toss_best_selling(array $query = []): array {
 }
 function toss_today_deals(array $query = []): array {
     if (isset($query['size'])) $query['size'] = max(1, min(30, (int)$query['size']));
-    $key = 'v2:today-deals:' . json_encode($query);
+    $key = 'v3:today-deals:' . json_encode($query);
     if (($cached = toss_cache_get($key, 300)) && toss_product_list_cache_valid($cached)) return $cached;
     $result = toss_api_request('GET', '/openapi/products/today-deals', null, $query);
     toss_cache_set($key, $result);
@@ -155,7 +154,7 @@ function toss_today_deals(array $query = []): array {
 function toss_category_best(int|string $categoryId, array $query = []): array {
     if ((string)$categoryId === '') throw new RuntimeException('categoryId required');
     if (isset($query['size'])) $query['size'] = max(1, min(100, (int)$query['size']));
-    $key = 'v2:category:' . (string)$categoryId . ':' . json_encode($query);
+    $key = 'v3:category:' . (string)$categoryId . ':' . json_encode($query);
     if (($cached = toss_cache_get($key, 21600)) && toss_product_list_cache_valid($cached)) return $cached;
     $result = toss_api_request('GET', '/openapi/products/best-categories/' . rawurlencode((string)$categoryId), null, $query);
     toss_cache_set($key, $result);
@@ -167,6 +166,13 @@ function toss_product_details(array $tacaltItemIds): array {
     if (!$ids) throw new InvalidArgumentException('tacaltItemIds required');
     if (count($ids) > 30) throw new InvalidArgumentException('maximum 30 tacaltItemIds');
     return toss_api_request('GET', cfg()['toss']['detail_path'], null, ['tacaltItemIds' => implode(',', $ids)]);
+}
+
+function toss_product_details_by_tacalds(array $tacalds): array {
+    $ids = array_values(array_unique(array_filter(array_map(fn($v)=>(string)$v, $tacalds), fn($v)=>$v!=='')));
+    if (!$ids) throw new InvalidArgumentException('tacalds required');
+    if (count($ids) > 30) throw new InvalidArgumentException('maximum 30 tacalds');
+    return toss_api_request('GET', cfg()['toss']['detail_path'], null, ['tacalds' => implode(',', $ids)]);
 }
 
 function toss_create_sharelink(int|string $tacaltItemId): array {
