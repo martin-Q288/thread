@@ -9,8 +9,6 @@ function manmo_load_env(string $file): void {
         if ($line === '' || substr($line, 0, 1) === '#' || strpos($line, '=') === false) continue;
         [$key, $value] = array_map('trim', explode('=', $line, 2));
         $value = trim($value, "\"'");
-
-        // Cloudways may disable putenv(), so keep values in PHP globals only.
         if (!array_key_exists($key, $_ENV) || $_ENV[$key] === '') $_ENV[$key] = $value;
         if (!array_key_exists($key, $_SERVER) || $_SERVER[$key] === '') $_SERVER[$key] = $value;
     }
@@ -50,7 +48,6 @@ function cfg(): array {
         'toss' => [
             'access_key' => (string)envv('TOSS_ACCESS_KEY', ''),
             'secret_key' => (string)envv('TOSS_SECRET_KEY', ''),
-            // Toss docs call this publisherId. Keep TOSS_MEMBER_ID for backwards compatibility.
             'publisher_id' => (string)envv('TOSS_PUBLISHER_ID', envv('TOSS_MEMBER_ID', '')),
             'token_url' => (string)envv('TOSS_TOKEN_URL', 'https://oauth2.cert.toss.im/token'),
             'base_url' => rtrim((string)envv('TOSS_API_BASE_URL', 'https://sharelink.toss.im'), '/'),
@@ -58,6 +55,9 @@ function cfg(): array {
             'products_path' => (string)envv('TOSS_PRODUCTS_PATH', '/openapi/products/best-selling'),
             'sharelink_path' => (string)envv('TOSS_SHARELINK_PATH', '/openapi/links'),
             'health_path' => (string)envv('TOSS_HEALTH_PATH', '/openapi/health'),
+            'detail_path' => (string)envv('TOSS_DETAIL_PATH', '/openapi/products/detail'),
+            'performance_path' => (string)envv('TOSS_PERFORMANCE_PATH', '/openapi/performance'),
+            'settlements_path' => (string)envv('TOSS_SETTLEMENTS_PATH', '/openapi/settlements'),
         ],
         'schedule' => [
             'start_hour' => (int)envv('POST_START_HOUR', '8'),
