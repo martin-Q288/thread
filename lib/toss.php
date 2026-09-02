@@ -37,13 +37,23 @@ function toss_curl(string $url, array $opts): array {
     if ($body === false) throw new TossApiException('Toss network error: ' . $error, $status);
     $json = json_decode((string)$body, true);
     $retryAfter = isset($headers['retry-after']) && ctype_digit((string)$headers['retry-after']) ? (int)$headers['retry-after'] : null;
-
     if ($status < 200 || $status >= 300) {
         $code = is_array($json) ? (string)($json['error']['errorCode'] ?? '') : '';
         throw new TossApiException('Toss API HTTP ' . $status . ' ' . ($error ?: (string)$body), $status, $code !== '' ? $code : null, $retryAfter);
     }
     if (!is_array($json)) throw new TossApiException('Toss API invalid JSON response', $status);
     return ['json'=>$json, 'status'=>$status, 'headers'=>$headers];
+}
+
+function toss_cache_file(string $key): string { return storage_path('toss_cache_' . hash('sha256', $key) . '.json'); }
+function toss_cache_get(string $key, int $ttl): ?array {
+    $file = toss_cache_file($key);
+    if (!is_file($file) || filemtime($file) < time() - $ttl) return null;
+    $data = json_decode((string)file_get_contents($file), true);
+    return is_array($data) ? $data : null;
+}
+function toss_cache_set(string $key, array $data): void {
+    file_put_contents(toss_cache_file($key), json_encode($data, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES), LOCK_EX);
 }
 
 function toss_token_state(): array {
@@ -58,7 +68,6 @@ function toss_access_token(bool $forceRefresh = false): string {
     if ($t['access_key'] === '' || $t['secret_key'] === '') throw new RuntimeException('Toss API credentials missing');
     $stored = toss_token_state();
     if (!$forceRefresh && !empty($stored['access_token']) && (int)($stored['expires_at'] ?? 0) > time() + 120) return (string)$stored['access_token'];
-
     $raw = toss_curl($t['token_url'], [
         CURLOPT_POST => true,
         CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
@@ -83,28 +92,16 @@ function toss_access_token(bool $forceRefresh = false): string {
     return $token;
 }
 
-function toss_is_nonretryable_code(?string $code): bool {
-    if (!$code) return false;
-    return $code === 'INVALID_ARGUMENT'
-        || $code === 'SHARELINK_OPENAPI_ACCESS_DENIED'
-        || $code === 'SHARELINK_OPENAPI_QUOTA_EXCEEDED'
-        || str_starts_with($code, 'OPENAPI_SUB_TAG_');
-}
-
 function toss_api_request(string $method, string $path, ?array $payload = null, array $query = [], int $attempt = 0): array {
     $t = cfg()['toss'];
     $url = $t['base_url'] . '/' . ltrim($path, '/');
     if ($query) $url .= '?' . http_build_query($query);
     $token = toss_access_token(false);
-    $opts = [
-        CURLOPT_CUSTOMREQUEST => strtoupper($method),
-        CURLOPT_HTTPHEADER => ['Accept: application/json', 'Authorization: Bearer ' . $token],
-    ];
+    $opts = [CURLOPT_CUSTOMREQUEST => strtoupper($method), CURLOPT_HTTPHEADER => ['Accept: application/json', 'Authorization: Bearer ' . $token]];
     if ($payload !== null) {
         $opts[CURLOPT_HTTPHEADER][] = 'Content-Type: application/json';
         $opts[CURLOPT_POSTFIELDS] = json_encode($payload, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
     }
-
     try {
         $raw = toss_curl($url, $opts);
     } catch (TossApiException $e) {
@@ -119,7 +116,6 @@ function toss_api_request(string $method, string $path, ?array $payload = null, 
         }
         throw $e;
     }
-
     $result = $raw['json'];
     if (($result['resultType'] ?? '') === 'FAIL') {
         $err = is_array($result['error'] ?? null) ? $result['error'] : [];
@@ -135,16 +131,28 @@ function toss_health(): array { return toss_api_request('GET', cfg()['toss']['he
 function toss_search_products(array $query = []): array { return toss_best_selling($query); }
 function toss_best_selling(array $query = []): array {
     if (isset($query['size'])) $query['size'] = max(1, min(100, (int)$query['size']));
-    return toss_api_request('GET', '/openapi/products/best-selling', null, $query);
+    $key = 'best-selling:' . json_encode($query);
+    if ($cached = toss_cache_get($key, 3600)) return $cached;
+    $result = toss_api_request('GET', '/openapi/products/best-selling', null, $query);
+    toss_cache_set($key, $result);
+    return $result;
 }
 function toss_today_deals(array $query = []): array {
     if (isset($query['size'])) $query['size'] = max(1, min(30, (int)$query['size']));
-    return toss_api_request('GET', '/openapi/products/today-deals', null, $query);
+    $key = 'today-deals:' . json_encode($query);
+    if ($cached = toss_cache_get($key, 300)) return $cached;
+    $result = toss_api_request('GET', '/openapi/products/today-deals', null, $query);
+    toss_cache_set($key, $result);
+    return $result;
 }
 function toss_category_best(int|string $categoryId, array $query = []): array {
     if ((string)$categoryId === '') throw new RuntimeException('categoryId required');
     if (isset($query['size'])) $query['size'] = max(1, min(100, (int)$query['size']));
-    return toss_api_request('GET', '/openapi/products/best-categories/' . rawurlencode((string)$categoryId), null, $query);
+    $key = 'category:' . (string)$categoryId . ':' . json_encode($query);
+    if ($cached = toss_cache_get($key, 21600)) return $cached;
+    $result = toss_api_request('GET', '/openapi/products/best-categories/' . rawurlencode((string)$categoryId), null, $query);
+    toss_cache_set($key, $result);
+    return $result;
 }
 
 function toss_product_details(array $tacaltItemIds): array {
@@ -155,12 +163,17 @@ function toss_product_details(array $tacaltItemIds): array {
 }
 
 function toss_create_sharelink(int|string $tacaltItemId): array {
+    static $lastIssuedAt = 0.0;
     $publisherId = cfg()['toss']['publisher_id'];
     if ($publisherId === '') throw new RuntimeException('TOSS_PUBLISHER_ID/TOSS_MEMBER_ID missing');
-    return toss_api_request('POST', cfg()['toss']['sharelink_path'], [
+    $elapsed = microtime(true) - $lastIssuedAt;
+    if ($lastIssuedAt > 0 && $elapsed < 0.12) usleep((int)((0.12 - $elapsed) * 1000000)); // stay below 10 rps
+    $result = toss_api_request('POST', cfg()['toss']['sharelink_path'], [
         'tacaltItemId' => is_numeric($tacaltItemId) ? (int)$tacaltItemId : $tacaltItemId,
         'publisherId' => $publisherId,
     ]);
+    $lastIssuedAt = microtime(true);
+    return $result;
 }
 
 function toss_performance(string $fromDate, string $toDate, array $query = []): array {
