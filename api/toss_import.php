@@ -3,7 +3,56 @@
 declare(strict_types=1);
 require_once dirname(__DIR__) . '/lib/db.php';
 require_once dirname(__DIR__) . '/lib/toss.php';
-require_once dirname(__DIR__) . '/lib/toss_collect.php';
+
+function manmo_collect_toss_products(string $source, int $targetCount, string $categoryId = '', string $startCursor = ''): array {
+    $max = $source === 'today-deals' ? 30 : 100;
+    $targetCount = max(1, min($max, $targetCount));
+    $cursor = $startCursor;
+    $items = [];
+    $lastSuccess = ['items'=>[], 'hasNext'=>false, 'nextCursor'=>null];
+    $category = null;
+    $seenCursors = [];
+
+    while (count($items) < $targetCount) {
+        $query = ['size'=>1];
+        if ($cursor !== '') $query['cursor'] = $cursor;
+
+        if ($source === 'today-deals') {
+            $page = toss_today_deals($query);
+        } elseif ($source === 'category') {
+            if ($categoryId === '') throw new InvalidArgumentException('categoryId required');
+            $page = toss_category_best($categoryId, $query);
+        } else {
+            $page = toss_best_selling($query);
+        }
+
+        $success = is_array($page['success'] ?? null) ? $page['success'] : [];
+        $pageItems = is_array($success['items'] ?? null) ? $success['items'] : [];
+        foreach ($pageItems as $item) {
+            if (!is_array($item)) continue;
+            $items[] = $item;
+            if (count($items) >= $targetCount) break;
+        }
+
+        if ($category === null && is_array($success['category'] ?? null)) $category = $success['category'];
+        $lastSuccess = $success;
+        $hasNext = (bool)($success['hasNext'] ?? false);
+        $nextCursor = (string)($success['nextCursor'] ?? '');
+        if (!$hasNext || $nextCursor === '') break;
+        if (isset($seenCursors[$nextCursor])) break;
+        $seenCursors[$nextCursor] = true;
+        $cursor = $nextCursor;
+        usleep(150000);
+    }
+
+    $out = [
+        'items' => $items,
+        'hasNext' => (bool)($lastSuccess['hasNext'] ?? false),
+        'nextCursor' => $lastSuccess['nextCursor'] ?? null,
+    ];
+    if ($category !== null) $out['category'] = $category;
+    return ['resultType'=>'SUCCESS', 'success'=>$out];
+}
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_response(['error'=>'method_not_allowed'],405);
 require_admin();
@@ -17,17 +66,17 @@ try {
 
     if ($source === 'today-deals') {
         $size = max(1, min(30, (int)($body['size'] ?? 10)));
-        $list = toss_collect_products('today-deals', $size, '', $cursor);
+        $list = manmo_collect_toss_products('today-deals', $size, '', $cursor);
         $categoryName = '토스 하루특가';
     } elseif ($source === 'category') {
         if ($categoryId === '') json_response(['error'=>'category_id_required'],422);
         $size = max(1, min(100, (int)($body['size'] ?? 10)));
-        $list = toss_collect_products('category', $size, $categoryId, $cursor);
+        $list = manmo_collect_toss_products('category', $size, $categoryId, $cursor);
         $categoryName = trim((string)($list['success']['category']['displayName'] ?? ('카테고리 ' . $categoryId)));
     } else {
         $source = 'best-selling';
         $size = max(1, min(100, (int)($body['size'] ?? 10)));
-        $list = toss_collect_products('best-selling', $size, '', $cursor);
+        $list = manmo_collect_toss_products('best-selling', $size, '', $cursor);
         $categoryName = '토스 베스트';
     }
 
