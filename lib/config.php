@@ -9,9 +9,13 @@ function manmo_load_env(string $file): void {
         if ($line === '' || substr($line, 0, 1) === '#' || strpos($line, '=') === false) continue;
         [$key, $value] = array_map('trim', explode('=', $line, 2));
         $value = trim($value, "\"'");
-        if (getenv($key) === false) {
-            putenv($key . '=' . $value);
+
+        // Cloudways may disable putenv(), so keep values in PHP globals only.
+        if (!array_key_exists($key, $_ENV) || $_ENV[$key] === '') {
             $_ENV[$key] = $value;
+        }
+        if (!array_key_exists($key, $_SERVER) || $_SERVER[$key] === '') {
+            $_SERVER[$key] = $value;
         }
     }
 }
@@ -19,8 +23,14 @@ function manmo_load_env(string $file): void {
 manmo_load_env(dirname(__DIR__) . '/.env');
 
 function envv(string $key, ?string $default = null): ?string {
-    $value = getenv($key);
-    return ($value === false || $value === '') ? $default : $value;
+    $value = $_ENV[$key] ?? ($_SERVER[$key] ?? null);
+
+    if (($value === null || $value === '') && function_exists('getenv')) {
+        $fromEnv = getenv($key);
+        if ($fromEnv !== false && $fromEnv !== '') $value = $fromEnv;
+    }
+
+    return ($value === null || $value === '') ? $default : (string) $value;
 }
 
 function cfg(): array {
