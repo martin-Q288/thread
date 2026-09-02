@@ -18,6 +18,52 @@ function manmo_collect_toss_products(string $source, int $targetCount, string $c
     return toss_best_selling($query);
 }
 
+function manmo_collect_toss_products_one_by_one(string $source, int $targetCount, string $categoryId = '', string $startCursor = ''): array {
+    $max = $source === 'today-deals' ? 30 : 100;
+    $targetCount = max(1, min($max, $targetCount));
+    $items = [];
+    $cursor = $startCursor;
+    $nextCursor = null;
+    $hasNext = false;
+    $category = null;
+
+    for ($i = 0; $i < $targetCount; $i++) {
+        $query = ['size'=>1];
+        if ($cursor !== '') $query['cursor'] = $cursor;
+
+        if ($source === 'today-deals') {
+            $page = toss_api_request('GET', '/openapi/products/today-deals', null, $query);
+        } elseif ($source === 'category') {
+            if ($categoryId === '') throw new InvalidArgumentException('categoryId required');
+            $page = toss_api_request('GET', '/openapi/products/best-categories/' . rawurlencode($categoryId), null, $query);
+            if (is_array($page['success']['category'] ?? null)) $category = $page['success']['category'];
+        } else {
+            $page = toss_api_request('GET', '/openapi/products/best-selling', null, $query);
+        }
+
+        $pageItems = is_array($page['success']['items'] ?? null) ? $page['success']['items'] : [];
+        if (!$pageItems) {
+            $hasNext = false;
+            $nextCursor = null;
+            break;
+        }
+
+        foreach ($pageItems as $pageItem) {
+            if (is_array($pageItem)) $items[] = $pageItem;
+        }
+
+        $hasNext = (bool)($page['success']['hasNext'] ?? false);
+        $nextCursor = $page['success']['nextCursor'] ?? null;
+        if (!$hasNext || !is_string($nextCursor) || $nextCursor === '') break;
+        $cursor = $nextCursor;
+        usleep(150000);
+    }
+
+    $success = ['items'=>$items, 'nextCursor'=>$nextCursor, 'hasNext'=>$hasNext];
+    if ($category !== null) $success['category'] = $category;
+    return ['resultType'=>'SUCCESS', 'success'=>$success];
+}
+
 function manmo_extract_tacald(array $item): string {
     foreach (['tacald','productId'] as $key) {
         $v = trim((string)($item[$key] ?? ''));
@@ -39,7 +85,11 @@ function manmo_enrich_missing_tacalt_ids(array $items): array {
     if (!$need) return $items;
 
     foreach (array_chunk(array_keys($need), 30) as $chunk) {
-        $detail = toss_product_details_by_tacalds($chunk);
+        try {
+            $detail = toss_product_details_by_tacalds($chunk);
+        } catch (Throwable $e) {
+            continue;
+        }
         $detailItems = is_array($detail['success']['items'] ?? null) ? $detail['success']['items'] : [];
         foreach ($detailItems as $d) {
             if (!is_array($d)) continue;
@@ -52,6 +102,14 @@ function manmo_enrich_missing_tacalt_ids(array $items): array {
         }
     }
     return $items;
+}
+
+function manmo_valid_id_count(array $items): int {
+    $n = 0;
+    foreach ($items as $item) {
+        if (is_array($item) && trim((string)($item['tacaltItemId'] ?? '')) !== '') $n++;
+    }
+    return $n;
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_response(['error'=>'method_not_allowed'],405);
@@ -84,6 +142,22 @@ try {
     if (!is_array($items)) $items = [];
     $items = manmo_enrich_missing_tacalt_ids($items);
 
+    // Toss production sometimes omits tacaltItemId when size > 1. If that happens,
+    // re-fetch the same list one item at a time with the opaque cursor. This path
+    // bypasses the list cache and is the most reliable way to obtain the option ID.
+    if ($items && manmo_valid_id_count($items) < count($items)) {
+        $fallback = manmo_collect_toss_products_one_by_one($source, $size, $categoryId, $cursor);
+        $fallbackItems = is_array($fallback['success']['items'] ?? null) ? $fallback['success']['items'] : [];
+        $fallbackItems = manmo_enrich_missing_tacalt_ids($fallbackItems);
+        if (manmo_valid_id_count($fallbackItems) > manmo_valid_id_count($items)) {
+            $items = $fallbackItems;
+            $list = $fallback;
+            if ($source === 'category') {
+                $categoryName = trim((string)($list['success']['category']['displayName'] ?? $categoryName));
+            }
+        }
+    }
+
     $db = db_read();
     $existingIds = [];
     foreach ($db['products'] as $p) {
@@ -95,11 +169,23 @@ try {
     $soldOut = 0;
     $invalid = 0;
     $expired = 0;
+    $invalidSamples = [];
 
     foreach ($items as $item) {
         if (!is_array($item)) { $invalid++; continue; }
         $itemId = trim((string)($item['tacaltItemId'] ?? ''));
-        if ($itemId === '') { $invalid++; continue; }
+        if ($itemId === '') {
+            $invalid++;
+            if (count($invalidSamples) < 3) {
+                $invalidSamples[] = [
+                    'keys'=>array_keys($item),
+                    'displayName'=>$item['displayName'] ?? null,
+                    'productUrl'=>$item['productUrl'] ?? null,
+                    'extractedTacald'=>manmo_extract_tacald($item),
+                ];
+            }
+            continue;
+        }
         if (isset($existingIds[$itemId])) { $duplicates++; continue; }
         if (!empty($item['isSoldOut'])) { $soldOut++; continue; }
 
@@ -154,6 +240,16 @@ try {
         $existingIds[$itemId] = true;
     }
 
+    if ($items && $invalid === count($items)) {
+        $sample = $invalidSamples[0] ?? [];
+        $keys = isset($sample['keys']) && is_array($sample['keys']) ? implode(',', $sample['keys']) : '';
+        json_response([
+            'error'=>'toss_ids_unresolved',
+            'message'=>'Toss가 상품은 반환했지만 tacaltItemId를 주지 않았습니다. size=1 cursor 재조회와 상세조회 보강까지 실패했습니다. 첫 상품 keys=['.$keys.'] productUrl='.(string)($sample['productUrl'] ?? '').' extractedTacald='.(string)($sample['extractedTacald'] ?? ''),
+            'diagnostic'=>$invalidSamples,
+        ],500);
+    }
+
     json_response([
         'ok' => true,
         'health' => $health['success']['status'] ?? 'ok',
@@ -169,6 +265,7 @@ try {
         'has_next' => (bool)($list['success']['hasNext'] ?? false),
         'next_cursor' => $list['success']['nextCursor'] ?? null,
         'products' => $imported,
+        'diagnostic' => $invalidSamples,
     ]);
 } catch (TossApiException $e) {
     json_response(['error'=>'toss_import_failed','message'=>$e->getMessage(),'error_code'=>$e->errorCode,'http_status'=>$e->httpStatus],500);
