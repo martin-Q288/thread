@@ -1,0 +1,63 @@
+<?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/threads.php';
+
+function threads_keyword_search(string $query, string $searchType = 'TOP', int $limit = 50): array {
+    $t = cfg()['threads'];
+    $auth = threads_token_state();
+    if ($auth['access_token'] === '') throw new RuntimeException('Threads account is not connected');
+
+    $searchType = strtoupper($searchType);
+    if (!in_array($searchType, ['TOP','RECENT'], true)) $searchType = 'TOP';
+    $limit = max(1, min(50, $limit));
+
+    $fields = 'id,media_product_type,media_type,permalink,username,text,timestamp,shortcode,is_quote_post,has_replies';
+    return http_get_json($t['graph_base'] . '/keyword_search', [
+        'q' => $query,
+        'search_type' => $searchType,
+        'search_mode' => 'KEYWORD',
+        'fields' => $fields,
+        'limit' => $limit,
+        'access_token' => $auth['access_token'],
+    ]);
+}
+
+function threads_insight_value(array $response, string $metric): ?int {
+    foreach (($response['data'] ?? []) as $row) {
+        if (($row['name'] ?? '') !== $metric) continue;
+        if (isset($row['total_value']['value']) && is_numeric($row['total_value']['value'])) {
+            return (int)$row['total_value']['value'];
+        }
+        if (isset($row['values'][0]['value']) && is_numeric($row['values'][0]['value'])) {
+            return (int)$row['values'][0]['value'];
+        }
+    }
+    return null;
+}
+
+function threads_try_public_post_metrics(string $threadId): array {
+    if ($threadId === '') return ['likes'=>null,'replies'=>null,'reposts'=>null,'quotes'=>null,'verified'=>false,'error'=>'missing_id'];
+    try {
+        $raw = threads_insights($threadId);
+        return [
+            'likes' => threads_insight_value($raw, 'likes'),
+            'replies' => threads_insight_value($raw, 'replies'),
+            'reposts' => threads_insight_value($raw, 'reposts'),
+            'quotes' => threads_insight_value($raw, 'quotes'),
+            'verified' => true,
+            'error' => null,
+        ];
+    } catch (Throwable $e) {
+        return ['likes'=>null,'replies'=>null,'reposts'=>null,'quotes'=>null,'verified'=>false,'error'=>$e->getMessage()];
+    }
+}
+
+function threads_commerce_signal(string $text): bool {
+    $text = mb_strtolower($text);
+    foreach (['댓글','링크','특가','할인','쿠팡','토스','공구','구매','가격','품절','프로모션','추천','사라','사봐','샀','득템','꿀템','자취템','살림템'] as $needle) {
+        if (mb_stripos($text, $needle) !== false) return true;
+    }
+    return false;
+}
