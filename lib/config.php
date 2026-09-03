@@ -47,7 +47,7 @@ function cfg(): array {
             'token_url' => (string)envv('THREADS_TOKEN_URL', 'https://graph.threads.net/oauth/access_token'),
             'long_token_url' => (string)envv('THREADS_LONG_TOKEN_URL', 'https://graph.threads.net/access_token'),
             'graph_base' => rtrim((string)envv('THREADS_GRAPH_BASE', 'https://graph.threads.net/v1.0'), '/'),
-            'scopes' => (string)envv('THREADS_SCOPES', 'threads_basic,threads_content_publish,threads_manage_replies,threads_read_replies,threads_manage_insights,threads_keyword_search,threads_profile_discovery'),
+            'scopes' => (string)envv('THREADS_SCOPES', 'threads_basic,threads_content_publish,threads_manage_replies,threads_keyword_search'),
         ],
         'toss' => [
             'access_key' => (string)envv('TOSS_ACCESS_KEY', ''),
