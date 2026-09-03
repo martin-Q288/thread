@@ -18,7 +18,7 @@ function manmo_id(array $item): string {
     $v = manmo_value($item, 'tacaltItemId');
     if (is_int($v) || is_float($v)) return (string)$v;
     $s = trim((string)$v);
-    return $s !== '' ? $s : '';
+    return ($s !== '' && ctype_digit($s)) ? $s : '';
 }
 
 function manmo_tacald(array $item): string {
@@ -31,8 +31,10 @@ function manmo_tacald(array $item): string {
     return '';
 }
 
-function manmo_fetch_list(string $source, int $size, string $categoryId, string $cursor): array {
-    $q = ['size' => $size];
+function manmo_fetch_page(string $source, string $categoryId, string $cursor = ''): array {
+    // Toss production has intermittently omitted tacaltItemId from multi-item list responses.
+    // Request exactly one product per page so the option ID is returned as consistently as possible.
+    $q = ['size' => 1];
     if ($cursor !== '') $q['cursor'] = $cursor;
     if ($source === 'today-deals') return toss_api_request('GET', '/openapi/products/today-deals', null, $q);
     if ($source === 'category') {
@@ -42,70 +44,48 @@ function manmo_fetch_list(string $source, int $size, string $categoryId, string 
     return toss_api_request('GET', '/openapi/products/best-selling', null, $q);
 }
 
-/**
- * Resolve one Toss list item to a usable tacaltItemId.
- * Order:
- * 1) list response ID
- * 2) product detail by tacald extracted from productUrl
- * 3) as a final compatibility probe, ask the link API with tacald. If Toss accepts
- *    it, use the ID returned by the link response and reuse that already-issued link.
- */
-function manmo_resolve_item(array $item): array {
-    $itemId = manmo_id($item);
+function manmo_detail_candidates(string $candidate): array {
+    if ($candidate === '' || !ctype_digit($candidate)) return [];
+    $out = [];
+
+    // Documented product-id lookup.
+    try {
+        $r = toss_product_details_by_tacalds([$candidate]);
+        foreach (($r['success']['items'] ?? []) as $item) if (is_array($item)) $out[] = $item;
+    } catch (Throwable $e) {}
+
+    // Compatibility fallback: some beta responses use the URL id as an option-like id.
+    try {
+        $r = toss_product_details([$candidate]);
+        foreach (($r['success']['items'] ?? []) as $item) if (is_array($item)) $out[] = $item;
+    } catch (Throwable $e) {}
+
+    return $out;
+}
+
+function manmo_resolve_item(array $raw): array {
+    $item = $raw;
+    $id = manmo_id($item);
     $tacald = manmo_tacald($item);
-    $detailDebug = null;
-    $preissuedLink = null;
-
-    if ($itemId === '' && $tacald !== '') {
-        try {
-            $detail = toss_product_details_by_tacalds([$tacald]);
-            $detailItems = is_array($detail['success']['items'] ?? null) ? $detail['success']['items'] : [];
-            $d = $detailItems[0] ?? null;
-            $detailDebug = [
-                'itemsCount' => count($detailItems),
-                'notFoundIds' => $detail['success']['notFoundIds'] ?? [],
-                'firstKeys' => is_array($d) ? array_keys($d) : [],
-                'firstId' => is_array($d) ? manmo_id($d) : '',
-                'firstTacald' => is_array($d) ? manmo_tacald($d) : '',
-            ];
-            if (is_array($d)) {
-                $item = array_replace($item, $d);
-                $itemId = manmo_id($item);
-            }
-        } catch (Throwable $e) {
-            $detailDebug = ['error' => $e->getMessage()];
-        }
-    }
-
-    // Some Toss production responses expose tacald but omit tacaltItemId even in detail.
-    // The link endpoint is authoritative: if it accepts the tacald-shaped candidate,
-    // its response gives us the monetizable link and usually the resolved option ID.
-    if ($itemId === '' && $tacald !== '') {
-        try {
-            $probe = toss_create_sharelink($tacald);
-            $success = is_array($probe['success'] ?? null) ? $probe['success'] : [];
-            $short = trim((string)($success['shortUrl'] ?? ''));
-            $origin = trim((string)($success['originUrl'] ?? ''));
-            if ($short !== '' || $origin !== '') {
-                $resolved = trim((string)($success['tacaltItemId'] ?? ''));
-                $itemId = $resolved !== '' ? $resolved : $tacald;
-                $item['tacaltItemId'] = $itemId;
-                $item['tacald'] = $tacald;
-                $preissuedLink = $probe;
-            }
-        } catch (Throwable $e) {
-            if (!is_array($detailDebug)) $detailDebug = [];
-            $detailDebug['linkProbeError'] = $e->getMessage();
-        }
-    }
-
-    return [
-        'item' => $item,
-        'itemId' => $itemId,
+    $debug = [
+        'name' => manmo_value($raw, 'displayName'),
+        'productUrl' => manmo_value($raw, 'productUrl'),
+        'listId' => manmo_value($raw, 'tacaltItemId'),
         'tacald' => $tacald,
-        'preissuedLink' => $preissuedLink,
-        'debug' => $detailDebug,
     ];
+
+    if ($id === '' && $tacald !== '') {
+        foreach (manmo_detail_candidates($tacald) as $detail) {
+            $candidateId = manmo_id($detail);
+            if ($candidateId !== '') {
+                $item = array_replace($item, $detail);
+                $id = $candidateId;
+                break;
+            }
+        }
+    }
+
+    return ['item' => $item, 'id' => $id, 'tacald' => $tacald, 'debug' => $debug];
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_response(['error' => 'method_not_allowed'], 405);
@@ -117,30 +97,24 @@ $cursor = isset($body['cursor']) ? (string)$body['cursor'] : '';
 
 try {
     $health = toss_health();
+
     if ($source === 'today-deals') {
-        $size = max(1, min(30, (int)($body['size'] ?? 10)));
+        $target = max(1, min(30, (int)($body['size'] ?? 10)));
         $categoryName = '토스 하루특가';
     } elseif ($source === 'category') {
         if ($categoryId === '') json_response(['error' => 'category_id_required'], 422);
-        $size = max(1, min(100, (int)($body['size'] ?? 10)));
+        $target = max(1, min(100, (int)($body['size'] ?? 10)));
         $categoryName = '카테고리 ' . $categoryId;
     } else {
         $source = 'best-selling';
-        $size = max(1, min(100, (int)($body['size'] ?? 10)));
+        $target = max(1, min(100, (int)($body['size'] ?? 10)));
         $categoryName = '토스 베스트';
-    }
-
-    // Use the documented list size in one request. ID resolution is done per item below.
-    $list = manmo_fetch_list($source, $size, $categoryId, $cursor);
-    $items = is_array($list['success']['items'] ?? null) ? $list['success']['items'] : [];
-    if ($source === 'category') {
-        $categoryName = trim((string)($list['success']['category']['displayName'] ?? $categoryName));
     }
 
     $db = db_read();
     $existingIds = [];
     $existingTacalds = [];
-    foreach ($db['products'] as $p) {
+    foreach (($db['products'] ?? []) as $p) {
         if (!empty($p['tacalt_item_id'])) $existingIds[(string)$p['tacalt_item_id']] = true;
         if (!empty($p['tacald'])) $existingTacalds[(string)$p['tacald']] = true;
     }
@@ -150,97 +124,116 @@ try {
     $soldOut = 0;
     $invalid = 0;
     $expired = 0;
+    $scanned = 0;
     $diagnostics = [];
+    $currentCursor = $cursor;
+    $nextCursor = null;
+    $hasNext = false;
 
-    foreach ($items as $rawItem) {
-        if (!is_array($rawItem)) { $invalid++; continue; }
+    // Scan beyond the requested count when Toss gives an unusable/broken item.
+    // This keeps the UI goal (e.g. 10 usable products) rather than stopping at 10 bad rows.
+    $scanLimit = min(100, max($target * 5, $target));
 
-        $resolved = manmo_resolve_item($rawItem);
-        $item = $resolved['item'];
-        $itemId = (string)$resolved['itemId'];
-        $tacald = (string)$resolved['tacald'];
+    for ($i = 0; $i < $scanLimit && count($imported) < $target; $i++) {
+        $page = manmo_fetch_page($source, $categoryId, $currentCursor);
+        if ($source === 'category') {
+            $categoryName = trim((string)($page['success']['category']['displayName'] ?? $categoryName));
+        }
 
-        if ($itemId === '') {
+        $pageItems = is_array($page['success']['items'] ?? null) ? $page['success']['items'] : [];
+        $hasNext = (bool)($page['success']['hasNext'] ?? false);
+        $nextCursor = is_string($page['success']['nextCursor'] ?? null) ? $page['success']['nextCursor'] : null;
+        if (!$pageItems) break;
+
+        $raw = $pageItems[0];
+        if (!is_array($raw)) {
             $invalid++;
-            if (count($diagnostics) < 3) {
-                $diagnostics[] = [
-                    'displayName' => manmo_value($rawItem, 'displayName'),
-                    'productUrl' => manmo_value($rawItem, 'productUrl'),
-                    'listIdValue' => manmo_value($rawItem, 'tacaltItemId'),
-                    'tacald' => $tacald,
-                    'detail' => $resolved['debug'],
-                ];
+        } else {
+            $scanned++;
+            $resolved = manmo_resolve_item($raw);
+            $item = $resolved['item'];
+            $itemId = (string)$resolved['id'];
+            $tacald = (string)$resolved['tacald'];
+
+            if ($itemId === '') {
+                $invalid++;
+                if (count($diagnostics) < 5) $diagnostics[] = $resolved['debug'];
+            } elseif (isset($existingIds[$itemId]) || ($tacald !== '' && isset($existingTacalds[$tacald]))) {
+                $duplicates++;
+            } elseif (!empty(manmo_value($item, 'isSoldOut'))) {
+                $soldOut++;
+            } else {
+                $endAt = trim((string)(manmo_value($item, 'endAt') ?? ''));
+                if ($endAt !== '' && strtotime($endAt) !== false && strtotime($endAt) <= time()) {
+                    $expired++;
+                } else {
+                    // Only issue a monetizable link after we have a genuine tacaltItemId.
+                    $link = toss_create_sharelink($itemId);
+                    $linkData = is_array($link['success'] ?? null) ? $link['success'] : [];
+                    $shortUrl = trim((string)($linkData['shortUrl'] ?? ''));
+                    $originUrl = trim((string)($linkData['originUrl'] ?? ''));
+                    if ($shortUrl === '' && $originUrl === '') throw new RuntimeException('Toss sharelink missing for item ' . $itemId);
+
+                    $discount = (float)(manmo_value($item, 'discountRate') ?? 0);
+                    $price = (int)(manmo_value($item, 'displayPrice') ?? 0);
+                    $original = (int)(manmo_value($item, 'originalPrice') ?? 0);
+                    $rating = manmo_value($item, 'reviewScore');
+                    $reviews = manmo_value($item, 'reviewCount');
+                    $descParts = [];
+                    if ($discount > 0) $descParts[] = '할인율 ' . rtrim(rtrim((string)$discount, '0'), '.') . '%';
+                    if ($original > 0 && $original !== $price) $descParts[] = '정가 ' . number_format($original) . '원';
+                    if ($rating !== null) $descParts[] = '평점 ' . $rating;
+                    if ($reviews !== null) $descParts[] = '리뷰 ' . number_format((int)$reviews) . '개';
+                    if ($endAt !== '') $descParts[] = '특가 종료 ' . $endAt;
+
+                    $descriptionRaw = manmo_value($item, 'description');
+                    $description = is_array($descriptionRaw) ? $descriptionRaw : [];
+                    $row = db_insert('products', [
+                        'name' => trim((string)(manmo_value($item, 'displayName') ?? ('Toss 상품 ' . $itemId))),
+                        'category' => $categoryName,
+                        'price' => $price,
+                        'discount_rate' => $discount,
+                        'description' => implode(' · ', $descParts),
+                        'toss_share_url' => $shortUrl !== '' ? $shortUrl : $originUrl,
+                        'toss_origin_url' => $originUrl,
+                        'product_url' => trim((string)(manmo_value($item, 'productUrl') ?? '')),
+                        'thumbnail_url' => trim((string)(manmo_value($item, 'thumbnailUrl') ?? '')),
+                        'main_image_urls' => is_array(manmo_value($item, 'mainImageUrls')) ? manmo_value($item, 'mainImageUrls') : [],
+                        'detail_image_urls' => is_array($description['detailImageUrls'] ?? null) ? $description['detailImageUrls'] : [],
+                        'tacalt_item_id' => $itemId,
+                        'tacald' => $tacald,
+                        'rank' => (int)(manmo_value($item, 'rank') ?? 0),
+                        'category_ids' => is_array(manmo_value($item, 'categoryIds')) ? manmo_value($item, 'categoryIds') : [],
+                        'is_sold_out' => false,
+                        'end_at' => $endAt !== '' ? $endAt : null,
+                        'source' => 'toss_' . str_replace('-', '_', $source),
+                        'source_category_id' => $source === 'category' ? $categoryId : null,
+                        'created_at' => date(DATE_ATOM),
+                    ]);
+                    $imported[] = $row;
+                    $existingIds[$itemId] = true;
+                    if ($tacald !== '') $existingTacalds[$tacald] = true;
+                }
             }
-            continue;
         }
 
-        if (isset($existingIds[$itemId]) || ($tacald !== '' && isset($existingTacalds[$tacald]))) {
-            $duplicates++;
-            continue;
-        }
-        if (!empty(manmo_value($item, 'isSoldOut'))) { $soldOut++; continue; }
-
-        $endAt = trim((string)(manmo_value($item, 'endAt') ?? ''));
-        if ($endAt !== '' && strtotime($endAt) !== false && strtotime($endAt) <= time()) {
-            $expired++;
-            continue;
-        }
-
-        $link = $resolved['preissuedLink'];
-        if (!is_array($link)) $link = toss_create_sharelink($itemId);
-        $linkData = is_array($link['success'] ?? null) ? $link['success'] : [];
-        $shortUrl = trim((string)($linkData['shortUrl'] ?? ''));
-        $originUrl = trim((string)($linkData['originUrl'] ?? ''));
-        if ($shortUrl === '' && $originUrl === '') throw new RuntimeException('Toss sharelink missing for item ' . $itemId);
-
-        $discount = (float)(manmo_value($item, 'discountRate') ?? 0);
-        $price = (int)(manmo_value($item, 'displayPrice') ?? 0);
-        $original = (int)(manmo_value($item, 'originalPrice') ?? 0);
-        $rating = manmo_value($item, 'reviewScore');
-        $reviews = manmo_value($item, 'reviewCount');
-        $descParts = [];
-        if ($discount > 0) $descParts[] = '할인율 ' . rtrim(rtrim((string)$discount, '0'), '.') . '%';
-        if ($original > 0 && $original !== $price) $descParts[] = '정가 ' . number_format($original) . '원';
-        if ($rating !== null) $descParts[] = '평점 ' . $rating;
-        if ($reviews !== null) $descParts[] = '리뷰 ' . number_format((int)$reviews) . '개';
-        if ($endAt !== '') $descParts[] = '특가 종료 ' . $endAt;
-
-        $descriptionRaw = manmo_value($item, 'description');
-        $description = is_array($descriptionRaw) ? $descriptionRaw : [];
-        $row = db_insert('products', [
-            'name' => trim((string)(manmo_value($item, 'displayName') ?? ('Toss 상품 ' . $itemId))),
-            'category' => $categoryName,
-            'price' => $price,
-            'discount_rate' => $discount,
-            'description' => implode(' · ', $descParts),
-            'toss_share_url' => $shortUrl !== '' ? $shortUrl : $originUrl,
-            'toss_origin_url' => $originUrl,
-            'product_url' => trim((string)(manmo_value($item, 'productUrl') ?? '')),
-            'thumbnail_url' => trim((string)(manmo_value($item, 'thumbnailUrl') ?? '')),
-            'main_image_urls' => is_array(manmo_value($item, 'mainImageUrls')) ? manmo_value($item, 'mainImageUrls') : [],
-            'detail_image_urls' => is_array($description['detailImageUrls'] ?? null) ? $description['detailImageUrls'] : [],
-            'tacalt_item_id' => $itemId,
-            'tacald' => $tacald,
-            'rank' => (int)(manmo_value($item, 'rank') ?? 0),
-            'category_ids' => is_array(manmo_value($item, 'categoryIds')) ? manmo_value($item, 'categoryIds') : [],
-            'is_sold_out' => false,
-            'end_at' => $endAt !== '' ? $endAt : null,
-            'source' => 'toss_' . str_replace('-', '_', $source),
-            'source_category_id' => $source === 'category' ? $categoryId : null,
-            'created_at' => date(DATE_ATOM),
-        ]);
-        $imported[] = $row;
-        $existingIds[$itemId] = true;
-        if ($tacald !== '') $existingTacalds[$tacald] = true;
-        usleep(120000);
+        if (!$hasNext || !$nextCursor) break;
+        $currentCursor = $nextCursor;
+        // Keep comfortably below Toss partner-wide 10 rps limit.
+        usleep(150000);
     }
 
-    if ($items && $invalid === count($items)) {
+    // Do not hide partial success. If Toss beta omitted IDs for some rows, return the usable products
+    // and show exactly how many were skipped. Only hard-fail when zero usable products were found.
+    if (!$imported && $scanned > 0) {
         json_response([
-            'error' => 'toss_ids_unresolved',
-            'message' => 'Toss 목록은 정상이나 옵션 ID 해석에 실패했습니다. 화면의 진단값을 확인해 주세요.',
+            'error' => 'toss_no_usable_products',
+            'message' => 'Toss에서 ' . $scanned . '개 상품을 확인했지만 추적 링크를 만들 수 있는 옵션 ID가 한 건도 내려오지 않았습니다. 이는 현재 Toss Open API 응답 문제입니다.',
+            'requested' => $target,
+            'scanned' => $scanned,
+            'invalid' => $invalid,
             'diagnostic' => $diagnostics,
-        ], 500);
+        ], 502);
     }
 
     json_response([
@@ -248,15 +241,15 @@ try {
         'health' => $health['success']['status'] ?? 'ok',
         'source' => $source,
         'category' => $categoryName,
-        'requested' => $size,
-        'received' => count($items),
+        'requested' => $target,
+        'received' => $scanned,
         'imported' => count($imported),
         'duplicates' => $duplicates,
         'sold_out' => $soldOut,
         'invalid' => $invalid,
         'expired' => $expired,
-        'has_next' => (bool)($list['success']['hasNext'] ?? false),
-        'next_cursor' => $list['success']['nextCursor'] ?? null,
+        'has_next' => $hasNext,
+        'next_cursor' => $nextCursor,
         'products' => $imported,
         'diagnostic' => $diagnostics,
     ]);
