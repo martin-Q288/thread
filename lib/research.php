@@ -125,6 +125,8 @@ function manmo_product_research_draft(array $product): array {
         'review_score' => (float)($product['review_score'] ?? 0),
         'review_count' => (int)($product['review_count'] ?? 0),
     ];
+    $productJson = json_encode($productData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $benchmarkBlock = manmo_benchmark_prompt_block($benchmarks);
 
     $prompt = <<<PROMPT
 너는 한국 Threads 커머스 콘텐츠 리서처이자 카피라이터다.
@@ -149,10 +151,10 @@ function manmo_product_research_draft(array $product): array {
 - 벤치마크 원문을 8단어 이상 연속으로 복사하지 않는다.
 
 상품:
-{$thisProduct = json_encode($productData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)}
+$productJson
 
 좋아요 1만+ Threads 벤치마크:
-{$thisBenchmarks = manmo_benchmark_prompt_block($benchmarks)}
+$benchmarkBlock
 
 반드시 아래 JSON 하나만 출력해라. 마크다운 코드블록 금지.
 {
@@ -203,8 +205,8 @@ function manmo_verify_threads_candidate_with_openai(array $post): array {
 
     $prompt = <<<PROMPT
 아래 공개 Threads 게시물을 웹에서 직접 확인해라.
-URL: {$permalink}
-게시물 텍스트 참고: {$text}
+URL: $permalink
+게시물 텍스트 참고: $text
 
 목표는 현재 공개 화면에서 좋아요 수가 10,000개 이상인지 검증하는 것이다.
 - 실제로 좋아요 숫자를 확인할 수 있을 때만 verified=true.
