@@ -14,7 +14,7 @@ $cursor = isset($body['cursor']) ? (string)$body['cursor'] : '';
 function toss_v2_item_id(array $item): string {
     foreach ($item as $key => $value) {
         $normalized = strtolower((string)preg_replace('/[^a-z0-9]/i', '', (string)$key));
-        if ($normalized !== 'tacalitemid' && $normalized !== 'tacaltitemid') continue;
+        if (!in_array($normalized, ['tacaitemid', 'tacalitemid', 'tacaltitemid'], true)) continue;
         if (is_int($value) || is_float($value)) return (string)(int)$value;
         $s = trim((string)$value);
         if ($s !== '' && ctype_digit($s)) return $s;
@@ -26,7 +26,7 @@ function toss_v2_id_debug(array $item): array {
     $rows = [];
     foreach ($item as $key => $value) {
         $normalized = strtolower((string)preg_replace('/[^a-z0-9]/i', '', (string)$key));
-        if (strpos($normalized, 'tacal') === false && strpos($normalized, 'itemid') === false) continue;
+        if (strpos($normalized, 'taca') === false && strpos($normalized, 'itemid') === false) continue;
         $rows[] = [
             'key' => (string)$key,
             'key_hex' => bin2hex((string)$key),
@@ -165,7 +165,7 @@ try {
 
     json_response([
         'ok' => true,
-        'version' => 'toss-import-v2-normalized-id',
+        'version' => 'toss-import-v2-taca-id',
         'health' => $health['success']['status'] ?? 'ok',
         'source' => $source,
         'category' => $categoryName,
@@ -182,7 +182,7 @@ try {
         'diagnostic' => $diagnostic,
     ]);
 } catch (TossApiException $e) {
-    json_response(['error' => 'toss_import_failed', 'message' => $e->getMessage(), 'error_code' => $e->errorCode, 'http_status' => $e->httpStatus, 'version' => 'toss-import-v2-normalized-id'], 500);
+    json_response(['error' => 'toss_import_failed', 'message' => $e->getMessage(), 'error_code' => $e->errorCode, 'http_status' => $e->httpStatus, 'version' => 'toss-import-v2-taca-id'], 500);
 } catch (Throwable $e) {
-    json_response(['error' => 'toss_import_failed', 'message' => $e->getMessage(), 'version' => 'toss-import-v2-normalized-id'], 500);
+    json_response(['error' => 'toss_import_failed', 'message' => $e->getMessage(), 'version' => 'toss-import-v2-taca-id'], 500);
 }
