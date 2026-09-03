@@ -12,10 +12,30 @@ $categoryId = trim((string)($body['category_id'] ?? ''));
 $cursor = isset($body['cursor']) ? (string)$body['cursor'] : '';
 
 function toss_v2_item_id(array $item): string {
-    $v = $item['tacalItemId'] ?? $item['tacaltItemId'] ?? null;
-    if (is_int($v) || is_float($v)) return (string)(int)$v;
-    $s = trim((string)$v);
-    return ($s !== '' && ctype_digit($s)) ? $s : '';
+    foreach ($item as $key => $value) {
+        $normalized = strtolower((string)preg_replace('/[^a-z0-9]/i', '', (string)$key));
+        if ($normalized !== 'tacalitemid' && $normalized !== 'tacaltitemid') continue;
+        if (is_int($value) || is_float($value)) return (string)(int)$value;
+        $s = trim((string)$value);
+        if ($s !== '' && ctype_digit($s)) return $s;
+    }
+    return '';
+}
+
+function toss_v2_id_debug(array $item): array {
+    $rows = [];
+    foreach ($item as $key => $value) {
+        $normalized = strtolower((string)preg_replace('/[^a-z0-9]/i', '', (string)$key));
+        if (strpos($normalized, 'tacal') === false && strpos($normalized, 'itemid') === false) continue;
+        $rows[] = [
+            'key' => (string)$key,
+            'key_hex' => bin2hex((string)$key),
+            'normalized' => $normalized,
+            'value' => $value,
+            'value_type' => gettype($value),
+        ];
+    }
+    return $rows;
 }
 
 function toss_v2_fetch_one(string $source, string $categoryId, string $cursor): array {
@@ -61,8 +81,6 @@ try {
     $nextCursor = null;
     $hasNext = false;
 
-    // Toss production currently exposes tacalItemId reliably on size=1 responses.
-    // Fetch one product per cursor step, then continue until requested count is processed.
     for ($n = 0; $n < $target; $n++) {
         $page = toss_v2_fetch_one($source, $categoryId, $currentCursor);
         if ($source === 'category') {
@@ -85,8 +103,7 @@ try {
                 $invalid++;
                 if (count($diagnostic) < 3) $diagnostic[] = [
                     'keys' => array_keys($item),
-                    'tacalItemId' => $item['tacalItemId'] ?? null,
-                    'tacaltItemId' => $item['tacaltItemId'] ?? null,
+                    'id_candidates' => toss_v2_id_debug($item),
                     'name' => $item['displayName'] ?? null,
                 ];
             } elseif (isset($existing[$itemId])) {
@@ -148,7 +165,7 @@ try {
 
     json_response([
         'ok' => true,
-        'version' => 'toss-import-v2-size1-tacal',
+        'version' => 'toss-import-v2-normalized-id',
         'health' => $health['success']['status'] ?? 'ok',
         'source' => $source,
         'category' => $categoryName,
@@ -165,7 +182,7 @@ try {
         'diagnostic' => $diagnostic,
     ]);
 } catch (TossApiException $e) {
-    json_response(['error' => 'toss_import_failed', 'message' => $e->getMessage(), 'error_code' => $e->errorCode, 'http_status' => $e->httpStatus, 'version' => 'toss-import-v2-size1-tacal'], 500);
+    json_response(['error' => 'toss_import_failed', 'message' => $e->getMessage(), 'error_code' => $e->errorCode, 'http_status' => $e->httpStatus, 'version' => 'toss-import-v2-normalized-id'], 500);
 } catch (Throwable $e) {
-    json_response(['error' => 'toss_import_failed', 'message' => $e->getMessage(), 'version' => 'toss-import-v2-size1-tacal'], 500);
+    json_response(['error' => 'toss_import_failed', 'message' => $e->getMessage(), 'version' => 'toss-import-v2-normalized-id'], 500);
 }
