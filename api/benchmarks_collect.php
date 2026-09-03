@@ -10,11 +10,11 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_response(['error'=>'method_not_a
 require_admin();
 $body = request_json();
 $queries = $body['queries'] ?? [
-    '자취템', '살림템', '꿀템', '특가', '할인', '댓글 링크', '공구', '득템',
-    '다이어트 추천', '생활용품 추천', '가전 추천', '이거 사라'
+    '자취템', '살림템', '꿀템', '특가', '댓글 링크', '공구', '득템', '생활용품 추천'
 ];
 if (!is_array($queries) || !$queries) $queries = ['자취템','살림템','꿀템','특가'];
-$perQuery = max(5, min(50, (int)($body['limit_per_query'] ?? 25)));
+$perQuery = max(5, min(30, (int)($body['limit_per_query'] ?? 15)));
+$openaiVerifyLimit = max(0, min(30, (int)($body['openai_verify_limit'] ?? 12)));
 
 $db = db_read();
 $existing = [];
@@ -29,10 +29,12 @@ $verifiedFound = 0;
 $saved = 0;
 $insightsFailed = 0;
 $openaiVerified = 0;
+$openaiChecks = 0;
 $errors = [];
 $candidates = [];
+$seenCandidates = [];
 
-foreach (array_slice($queries, 0, 20) as $query) {
+foreach (array_slice($queries, 0, 12) as $query) {
     $query = trim((string)$query);
     if ($query === '') continue;
     try {
@@ -51,7 +53,8 @@ foreach (array_slice($queries, 0, 20) as $query) {
         $threadId = (string)($post['id'] ?? '');
         $permalink = (string)($post['permalink'] ?? '');
         $key = $threadId !== '' ? $threadId : $permalink;
-        if ($key === '' || isset($existing[$key])) continue;
+        if ($key === '' || isset($existing[$key]) || isset($seenCandidates[$key])) continue;
+        $seenCandidates[$key] = true;
 
         $metrics = threads_try_public_post_metrics($threadId);
         $likes = $metrics['likes'];
@@ -60,7 +63,8 @@ foreach (array_slice($queries, 0, 20) as $query) {
 
         if (!$metrics['verified'] || $likes === null) {
             $insightsFailed++;
-            if (trim((string)(cfg()['openai']['api_key'] ?? '')) !== '') {
+            if ($openaiChecks < $openaiVerifyLimit && trim((string)(cfg()['openai']['api_key'] ?? '')) !== '') {
+                $openaiChecks++;
                 $check = manmo_verify_threads_candidate_with_openai($post);
                 if (!empty($check['verified'])) {
                     $likes = (int)$check['likes'];
@@ -115,6 +119,7 @@ json_response([
     'verified_10k_found' => $verifiedFound,
     'saved' => $saved,
     'insights_failed' => $insightsFailed,
+    'openai_checks' => $openaiChecks,
     'openai_verified' => $openaiVerified,
     'verified_total' => count(manmo_verified_benchmarks(10000)),
     'errors' => $errors,
