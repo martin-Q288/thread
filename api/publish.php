@@ -17,14 +17,33 @@ $post = $db['posts'][$index];
 
 try {
     // Before publishing, re-check the Toss product's latest price / sold-out state.
+    // Toss detail API expects `tacalItemIds` or `tacalIds` (not the old typo `tacaltItemIds`).
     $productIndex = null;
     $product = null;
     $productId = (int)($post['product_id'] ?? 0);
     foreach ($db['products'] as $i => $p) {
         if ((int)($p['id'] ?? 0) === $productId) { $productIndex = $i; $product = $p; break; }
     }
+
     if ($product && !empty($product['tacalt_item_id'])) {
-        $detail = toss_product_details([(string)$product['tacalt_item_id']]);
+        $tossItemId = trim((string)$product['tacalt_item_id']);
+        $detail = null;
+
+        try {
+            $detail = toss_api_request('GET', cfg()['toss']['detail_path'], null, [
+                'tacalItemIds' => $tossItemId,
+            ]);
+        } catch (TossApiException $e) {
+            // Some Toss records can be keyed by tacalIds instead. Only fall back for an argument/id mismatch.
+            $code = strtoupper((string)$e->errorCode);
+            if ($code !== 'INVALID_ARGUMENT' && !str_contains(strtoupper($e->getMessage()), 'TACAL')) {
+                throw $e;
+            }
+            $detail = toss_api_request('GET', cfg()['toss']['detail_path'], null, [
+                'tacalIds' => $tossItemId,
+            ]);
+        }
+
         $items = $detail['success']['items'] ?? [];
         $fresh = is_array($items) && isset($items[0]) && is_array($items[0]) ? $items[0] : null;
         if (!$fresh) json_response(['error'=>'product_unavailable','message'=>'토스 상세 조회에서 상품을 찾지 못했습니다. 발행하지 않았습니다.'],409);
