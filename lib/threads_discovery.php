@@ -4,6 +4,36 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/threads.php';
 
+function threads_debug_current_token(): array {
+    $t = cfg()['threads'];
+    $auth = threads_token_state();
+    if ($auth['access_token'] === '') {
+        return ['ok'=>false,'scopes'=>[],'error'=>'Threads account is not connected'];
+    }
+    if (($t['app_id'] ?? '') === '' || ($t['app_secret'] ?? '') === '') {
+        return ['ok'=>false,'scopes'=>[],'error'=>'Threads app credentials missing'];
+    }
+
+    try {
+        $raw = http_get_json($t['graph_base'] . '/debug_token', [
+            'input_token' => $auth['access_token'],
+            'access_token' => $t['app_id'] . '|' . $t['app_secret'],
+        ]);
+        $data = is_array($raw['data'] ?? null) ? $raw['data'] : [];
+        $scopes = is_array($data['scopes'] ?? null) ? array_values($data['scopes']) : [];
+        return [
+            'ok' => !empty($data['is_valid']),
+            'is_valid' => (bool)($data['is_valid'] ?? false),
+            'scopes' => $scopes,
+            'expires_at' => $data['expires_at'] ?? null,
+            'user_id' => $data['user_id'] ?? null,
+            'error' => null,
+        ];
+    } catch (Throwable $e) {
+        return ['ok'=>false,'scopes'=>[],'error'=>$e->getMessage()];
+    }
+}
+
 function threads_keyword_search(string $query, string $searchType = 'TOP', int $limit = 50): array {
     $t = cfg()['threads'];
     $auth = threads_token_state();
@@ -13,11 +43,12 @@ function threads_keyword_search(string $query, string $searchType = 'TOP', int $
     if (!in_array($searchType, ['TOP','RECENT'], true)) $searchType = 'TOP';
     $limit = max(1, min(50, $limit));
 
+    // Match Meta's documented keyword_search request as closely as possible.
+    // KEYWORD is already the default search mode, so do not send search_mode unless TAG search is needed.
     $fields = 'id,media_product_type,media_type,permalink,username,text,timestamp,shortcode,is_quote_post,has_replies';
     return http_get_json($t['graph_base'] . '/keyword_search', [
         'q' => $query,
         'search_type' => $searchType,
-        'search_mode' => 'KEYWORD',
         'fields' => $fields,
         'limit' => $limit,
         'access_token' => $auth['access_token'],
