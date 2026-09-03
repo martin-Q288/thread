@@ -43,12 +43,11 @@ function threads_keyword_search(string $query, string $searchType = 'TOP', int $
     if (!in_array($searchType, ['TOP','RECENT'], true)) $searchType = 'TOP';
     $limit = max(1, min(50, $limit));
 
-    // Match Meta's documented keyword_search request as closely as possible.
-    // KEYWORD is already the default search mode, so do not send search_mode unless TAG search is needed.
     $fields = 'id,media_product_type,media_type,permalink,username,text,timestamp,shortcode,is_quote_post,has_replies';
     return http_get_json($t['graph_base'] . '/keyword_search', [
         'q' => $query,
         'search_type' => $searchType,
+        'search_mode' => 'KEYWORD',
         'fields' => $fields,
         'limit' => $limit,
         'access_token' => $auth['access_token'],
