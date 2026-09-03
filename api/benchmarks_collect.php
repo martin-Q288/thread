@@ -16,6 +16,26 @@ if (!is_array($queries) || !$queries) $queries = ['자취템','살림템','꿀�
 $perQuery = max(5, min(30, (int)($body['limit_per_query'] ?? 15)));
 $openaiVerifyLimit = max(0, min(30, (int)($body['openai_verify_limit'] ?? 12)));
 
+$tokenDebug = threads_debug_current_token();
+$scopes = is_array($tokenDebug['scopes'] ?? null) ? $tokenDebug['scopes'] : [];
+$hasKeywordScope = in_array('threads_keyword_search', $scopes, true);
+
+// If Meta can tell us the granted scopes and keyword search is missing, stop immediately
+// with a useful error instead of showing a misleading 0-search success.
+if (!empty($tokenDebug['ok']) && !$hasKeywordScope) {
+    json_response([
+        'ok' => false,
+        'error' => 'threads_keyword_search_permission_missing',
+        'message' => '현재 Threads 토큰에 threads_keyword_search 권한이 없습니다. 검색 권한 재연결 후 다시 실행하세요.',
+        'token_debug' => $tokenDebug,
+        'searched' => 0,
+        'commerce_candidates' => 0,
+        'verified_10k_found' => 0,
+        'saved' => 0,
+        'verified_total' => count(manmo_verified_benchmarks(10000)),
+    ]);
+}
+
 $db = db_read();
 $existing = [];
 foreach (($db['benchmarks'] ?? []) as $b) {
@@ -112,8 +132,16 @@ foreach (array_slice($queries, 0, 12) as $query) {
     }
 }
 
+$ok = $searched > 0 || count($errors) === 0;
+$message = null;
+if ($searched === 0 && count($errors) > 0) {
+    $message = 'Threads 검색 API 호출이 실패했습니다. 첫 오류: ' . (string)($errors[0]['error'] ?? 'unknown');
+}
+
 json_response([
-    'ok' => true,
+    'ok' => $ok,
+    'error' => $ok ? null : 'threads_keyword_search_failed',
+    'message' => $message,
     'searched' => $searched,
     'commerce_candidates' => $commerceCandidates,
     'verified_10k_found' => $verifiedFound,
@@ -122,6 +150,8 @@ json_response([
     'openai_checks' => $openaiChecks,
     'openai_verified' => $openaiVerified,
     'verified_total' => count(manmo_verified_benchmarks(10000)),
+    'token_debug' => $tokenDebug,
+    'has_keyword_scope' => $hasKeywordScope,
     'errors' => $errors,
     'sample_candidates' => array_slice($candidates, 0, 10),
 ]);
