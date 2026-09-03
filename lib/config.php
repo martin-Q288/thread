@@ -33,6 +33,10 @@ function cfg(): array {
         'app_url' => rtrim((string)envv('APP_URL', 'https://manmo.neocarelab.co.kr'), '/'),
         'admin_key' => (string)envv('MANMO_ADMIN_KEY', ''),
         'timezone' => (string)envv('APP_TIMEZONE', 'Asia/Seoul'),
+        'openai' => [
+            'api_key' => (string)envv('OPENAI_API_KEY', ''),
+            'model' => (string)envv('OPENAI_MODEL', 'gpt-5.6-terra'),
+        ],
         'threads' => [
             'app_id' => (string)envv('THREADS_APP_ID', ''),
             'app_secret' => (string)envv('THREADS_APP_SECRET', ''),
