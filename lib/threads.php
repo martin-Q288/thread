@@ -10,7 +10,7 @@ function http_post_form(string $url, array $fields, array $headers = []): array 
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_POSTFIELDS => http_build_query($fields),
         CURLOPT_HTTPHEADER => $headers,
-        CURLOPT_TIMEOUT => 30,
+        CURLOPT_TIMEOUT => 60,
     ]);
     $body = curl_exec($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
@@ -26,7 +26,7 @@ function http_post_form(string $url, array $fields, array $headers = []): array 
 function http_get_json(string $url, array $query = []): array {
     if ($query) $url .= (strpos($url, '?') !== false ? '&' : '?') . http_build_query($query);
     $ch = curl_init($url);
-    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30]);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 60]);
     $body = curl_exec($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     $error = curl_error($ch);
@@ -55,8 +55,6 @@ function threads_token_state(): array {
         'username' => $stored['username'] ?? null,
     ];
 
-    // Tokens entered directly in .env do not have a cached username yet.
-    // Resolve it once from Threads /me, then persist only the derived account metadata.
     if (($state['username'] === null || $state['username'] === '') && $state['access_token'] !== '' && $state['user_id'] !== '') {
         try {
             $me = http_get_json($cfg['graph_base'] . '/me', [
@@ -74,12 +72,10 @@ function threads_token_state(): array {
                     'expires_at' => $state['expires_at'],
                     'updated_at' => date(DATE_ATOM),
                 ];
-                // Do not copy .env access tokens into a web-managed file unless one was already stored there.
                 if (!empty($stored['access_token'])) $cached['access_token'] = $stored['access_token'];
                 threads_save_token($cached);
             }
         } catch (Throwable $e) {
-            // Account metadata is cosmetic; token connectivity should still remain usable.
         }
     }
 
@@ -137,22 +133,40 @@ function threads_exchange_code(string $code): array {
     return $saved;
 }
 
-function threads_publish_text(string $text, ?string $replyToId = null): array {
+function threads_create_container(array $fields): string {
     $t = cfg()['threads'];
     $auth = threads_token_state();
     if ($auth['access_token'] === '' || $auth['user_id'] === '') throw new RuntimeException('Threads account is not connected');
-
-    $fields = [
-        'media_type' => 'TEXT',
-        'text' => $text,
-        'access_token' => $auth['access_token'],
-    ];
-    if ($replyToId) $fields['reply_to_id'] = $replyToId;
-
+    $fields['access_token'] = $auth['access_token'];
     $container = http_post_form($t['graph_base'] . '/' . rawurlencode($auth['user_id']) . '/threads', $fields);
     $creationId = (string)($container['id'] ?? '');
     if ($creationId === '') throw new RuntimeException('Threads creation container id missing');
+    return $creationId;
+}
 
+function threads_wait_container(string $creationId, int $timeoutSeconds = 90): array {
+    $t = cfg()['threads'];
+    $auth = threads_token_state();
+    $started = time();
+    $last = [];
+    while ((time() - $started) < max(10, $timeoutSeconds)) {
+        $last = http_get_json($t['graph_base'] . '/' . rawurlencode($creationId), [
+            'fields' => 'status,error_message',
+            'access_token' => $auth['access_token'],
+        ]);
+        $status = strtoupper((string)($last['status'] ?? ''));
+        if ($status === 'FINISHED') return $last;
+        if (in_array($status, ['ERROR', 'EXPIRED'], true)) {
+            throw new RuntimeException('Threads media processing failed: ' . (string)($last['error_message'] ?? $status));
+        }
+        sleep(2);
+    }
+    throw new RuntimeException('Threads media processing timeout: ' . json_encode($last, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
+function threads_publish_container(string $creationId): array {
+    $t = cfg()['threads'];
+    $auth = threads_token_state();
     $published = http_post_form($t['graph_base'] . '/' . rawurlencode($auth['user_id']) . '/threads_publish', [
         'creation_id' => $creationId,
         'access_token' => $auth['access_token'],
@@ -160,12 +174,47 @@ function threads_publish_text(string $text, ?string $replyToId = null): array {
     return $published + ['creation_id' => $creationId];
 }
 
+function threads_publish_text(string $text, ?string $replyToId = null): array {
+    $fields = ['media_type' => 'TEXT', 'text' => $text];
+    if ($replyToId) $fields['reply_to_id'] = $replyToId;
+    $creationId = threads_create_container($fields);
+    return threads_publish_container($creationId);
+}
+
+function threads_publish_video(string $text, string $videoUrl): array {
+    $videoUrl = trim($videoUrl);
+    if ($videoUrl === '' || !preg_match('#^https://#i', $videoUrl)) {
+        throw new RuntimeException('A public HTTPS video URL is required');
+    }
+    $creationId = threads_create_container([
+        'media_type' => 'VIDEO',
+        'video_url' => $videoUrl,
+        'text' => $text,
+    ]);
+    $processing = threads_wait_container($creationId, 120);
+    $published = threads_publish_container($creationId);
+    return $published + ['processing' => $processing];
+}
+
+function threads_publish_video_with_comment(string $body, string $videoUrl, string $comment, int $delaySeconds = 8): array {
+    $main = threads_publish_video($body, $videoUrl);
+    $threadId = (string)($main['id'] ?? '');
+    if ($threadId === '') throw new RuntimeException('Published thread id missing');
+    $reply = null;
+    $comment = trim($comment);
+    if ($comment !== '') {
+        if ($delaySeconds > 0) sleep(min($delaySeconds, 20));
+        $reply = threads_publish_text($comment, $threadId);
+    }
+    return ['thread' => $main, 'reply' => $reply];
+}
+
 function threads_publish_with_comment(string $body, string $comment, int $delaySeconds = 15): array {
     $main = threads_publish_text($body);
     $threadId = (string)($main['id'] ?? '');
     if ($threadId === '') throw new RuntimeException('Published thread id missing');
     if ($delaySeconds > 0) sleep(min($delaySeconds, 30));
-    $reply = threads_publish_text($comment, $threadId);
+    $reply = trim($comment) !== '' ? threads_publish_text($comment, $threadId) : null;
     return ['thread' => $main, 'reply' => $reply];
 }
 
