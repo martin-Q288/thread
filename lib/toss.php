@@ -175,18 +175,37 @@ function toss_product_details_by_tacalds(array $tacalds): array {
     return toss_api_request('GET', cfg()['toss']['detail_path'], null, ['tacalds' => implode(',', $ids)]);
 }
 
-function toss_create_sharelink(int|string $tacaltItemId): array {
+function toss_create_sharelink(int|string $itemId): array {
     static $lastIssuedAt = 0.0;
     $publisherId = cfg()['toss']['publisher_id'];
     if ($publisherId === '') throw new RuntimeException('TOSS_PUBLISHER_ID/TOSS_MEMBER_ID missing');
-    $elapsed = microtime(true) - $lastIssuedAt;
-    if ($lastIssuedAt > 0 && $elapsed < 0.12) usleep((int)((0.12 - $elapsed) * 1000000));
-    $result = toss_api_request('POST', cfg()['toss']['sharelink_path'], [
-        'tacaltItemId' => is_numeric($tacaltItemId) ? (int)$tacaltItemId : $tacaltItemId,
-        'publisherId' => $publisherId,
-    ]);
-    $lastIssuedAt = microtime(true);
-    return $result;
+
+    $value = is_numeric($itemId) ? (int)$itemId : $itemId;
+    $fieldNames = ['tacaltItemId', 'tacaItemId', 'tacalItemId'];
+    $lastError = null;
+
+    foreach ($fieldNames as $fieldName) {
+        $elapsed = microtime(true) - $lastIssuedAt;
+        if ($lastIssuedAt > 0 && $elapsed < 0.12) usleep((int)((0.12 - $elapsed) * 1000000));
+        try {
+            $result = toss_api_request('POST', cfg()['toss']['sharelink_path'], [
+                $fieldName => $value,
+                'publisherId' => $publisherId,
+            ]);
+            $lastIssuedAt = microtime(true);
+            return $result;
+        } catch (TossApiException $e) {
+            $lastIssuedAt = microtime(true);
+            $lastError = $e;
+            $code = strtoupper((string)$e->errorCode);
+            if ($e->httpStatus === 401 || $e->httpStatus === 403 || $e->httpStatus === 429 || str_contains($code, 'ACCESS_DENIED') || str_contains($code, 'QUOTA_EXCEEDED')) {
+                throw $e;
+            }
+        }
+    }
+
+    if ($lastError instanceof TossApiException) throw $lastError;
+    throw new TossApiException('Toss sharelink issuance failed');
 }
 
 function toss_performance(string $fromDate, string $toDate, array $query = []): array {
