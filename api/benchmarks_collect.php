@@ -20,8 +20,6 @@ $tokenDebug = threads_debug_current_token();
 $scopes = is_array($tokenDebug['scopes'] ?? null) ? $tokenDebug['scopes'] : [];
 $hasKeywordScope = in_array('threads_keyword_search', $scopes, true);
 
-// If Meta can tell us the granted scopes and keyword search is missing, stop immediately
-// with a useful error instead of showing a misleading 0-search success.
 if (!empty($tokenDebug['ok']) && !$hasKeywordScope) {
     json_response([
         'ok' => false,
@@ -53,14 +51,28 @@ $openaiChecks = 0;
 $errors = [];
 $candidates = [];
 $seenCandidates = [];
+$searchDiagnostics = [];
 
 foreach (array_slice($queries, 0, 12) as $query) {
     $query = trim((string)$query);
     if ($query === '') continue;
+
+    $result = null;
+    $usedSearchType = 'TOP';
     try {
         $result = threads_keyword_search($query, 'TOP', $perQuery);
+        $topCount = count($result['data'] ?? []);
+        if ($topCount === 0) {
+            $usedSearchType = 'RECENT';
+            $result = threads_keyword_search($query, 'RECENT', $perQuery);
+        }
+        $searchDiagnostics[] = [
+            'query' => $query,
+            'search_type' => $usedSearchType,
+            'count' => count($result['data'] ?? []),
+        ];
     } catch (Throwable $e) {
-        $errors[] = ['query'=>$query,'error'=>$e->getMessage()];
+        $errors[] = ['query'=>$query,'search_type'=>$usedSearchType,'error'=>$e->getMessage()];
         continue;
     }
 
@@ -136,6 +148,8 @@ $ok = $searched > 0 || count($errors) === 0;
 $message = null;
 if ($searched === 0 && count($errors) > 0) {
     $message = 'Threads 검색 API 호출이 실패했습니다. 첫 오류: ' . (string)($errors[0]['error'] ?? 'unknown');
+} elseif ($searched === 0) {
+    $message = 'Threads 검색 API는 응답했지만 TOP/RECENT 모두 검색 결과가 0건이었습니다.';
 }
 
 json_response([
@@ -153,5 +167,6 @@ json_response([
     'token_debug' => $tokenDebug,
     'has_keyword_scope' => $hasKeywordScope,
     'errors' => $errors,
+    'search_diagnostics' => $searchDiagnostics,
     'sample_candidates' => array_slice($candidates, 0, 10),
 ]);
