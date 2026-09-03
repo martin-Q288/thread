@@ -14,8 +14,18 @@ function manmo_value(array $item, string $wanted): mixed {
     return null;
 }
 
+function manmo_first_value(array $item, array $aliases): mixed {
+    foreach ($aliases as $alias) {
+        $v = manmo_value($item, (string)$alias);
+        if ($v !== null && $v !== '') return $v;
+    }
+    return null;
+}
+
 function manmo_id(array $item): string {
-    $v = manmo_value($item, 'tacaltItemId');
+    // Toss production currently returns `tacalItemId` (one 't'), while docs/examples
+    // have also used `tacaltItemId`. Accept both so the beta API can change safely.
+    $v = manmo_first_value($item, ['tacalItemId', 'tacaltItemId']);
     if (is_int($v) || is_float($v)) return (string)$v;
     $s = trim((string)$v);
     return ($s !== '' && ctype_digit($s)) ? $s : '';
@@ -32,8 +42,6 @@ function manmo_tacald(array $item): string {
 }
 
 function manmo_fetch_page(string $source, string $categoryId, string $cursor = ''): array {
-    // Toss production has intermittently omitted tacaltItemId from multi-item list responses.
-    // Request exactly one product per page so the option ID is returned as consistently as possible.
     $q = ['size' => 1];
     if ($cursor !== '') $q['cursor'] = $cursor;
     if ($source === 'today-deals') return toss_api_request('GET', '/openapi/products/today-deals', null, $q);
@@ -48,13 +56,11 @@ function manmo_detail_candidates(string $candidate): array {
     if ($candidate === '' || !ctype_digit($candidate)) return [];
     $out = [];
 
-    // Documented product-id lookup.
     try {
         $r = toss_product_details_by_tacalds([$candidate]);
         foreach (($r['success']['items'] ?? []) as $item) if (is_array($item)) $out[] = $item;
     } catch (Throwable $e) {}
 
-    // Compatibility fallback: some beta responses use the URL id as an option-like id.
     try {
         $r = toss_product_details([$candidate]);
         foreach (($r['success']['items'] ?? []) as $item) if (is_array($item)) $out[] = $item;
@@ -70,7 +76,7 @@ function manmo_resolve_item(array $raw): array {
     $debug = [
         'name' => manmo_value($raw, 'displayName'),
         'productUrl' => manmo_value($raw, 'productUrl'),
-        'listId' => manmo_value($raw, 'tacaltItemId'),
+        'listId' => manmo_first_value($raw, ['tacalItemId', 'tacaltItemId']),
         'tacald' => $tacald,
     ];
 
@@ -130,8 +136,6 @@ try {
     $nextCursor = null;
     $hasNext = false;
 
-    // Scan beyond the requested count when Toss gives an unusable/broken item.
-    // This keeps the UI goal (e.g. 10 usable products) rather than stopping at 10 bad rows.
     $scanLimit = min(100, max($target * 5, $target));
 
     for ($i = 0; $i < $scanLimit && count($imported) < $target; $i++) {
@@ -167,7 +171,6 @@ try {
                 if ($endAt !== '' && strtotime($endAt) !== false && strtotime($endAt) <= time()) {
                     $expired++;
                 } else {
-                    // Only issue a monetizable link after we have a genuine tacaltItemId.
                     $link = toss_create_sharelink($itemId);
                     $linkData = is_array($link['success'] ?? null) ? $link['success'] : [];
                     $shortUrl = trim((string)($linkData['shortUrl'] ?? ''));
@@ -219,16 +222,13 @@ try {
 
         if (!$hasNext || !$nextCursor) break;
         $currentCursor = $nextCursor;
-        // Keep comfortably below Toss partner-wide 10 rps limit.
         usleep(150000);
     }
 
-    // Do not hide partial success. If Toss beta omitted IDs for some rows, return the usable products
-    // and show exactly how many were skipped. Only hard-fail when zero usable products were found.
     if (!$imported && $scanned > 0) {
         json_response([
             'error' => 'toss_no_usable_products',
-            'message' => 'Toss에서 ' . $scanned . '개 상품을 확인했지만 추적 링크를 만들 수 있는 옵션 ID가 한 건도 내려오지 않았습니다. 이는 현재 Toss Open API 응답 문제입니다.',
+            'message' => 'Toss에서 ' . $scanned . '개 상품을 확인했지만 추적 링크를 만들 수 있는 옵션 ID가 한 건도 내려오지 않았습니다.',
             'requested' => $target,
             'scanned' => $scanned,
             'invalid' => $invalid,
