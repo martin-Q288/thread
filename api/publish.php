@@ -14,12 +14,19 @@ $index = null;
 foreach ($db['posts'] as $i => $p) if ((int)$p['id'] === $postId) { $index = $i; break; }
 if ($index === null) json_response(['error'=>'post_not_found'],404);
 $post = $db['posts'][$index];
+if (($post['status'] ?? 'draft') !== 'draft') json_response(['error'=>'already_published','message'=>'이미 발행된 게시물입니다.'],409);
+
+$videoUrl = trim((string)($post['video_url'] ?? ''));
+if ($videoUrl === '') {
+    json_response(['error'=>'video_required','message'=>'Threads 발행 전에 영상 1개를 반드시 업로드해야 합니다.'],422);
+}
+if (!preg_match('#^https://#i', $videoUrl)) {
+    json_response(['error'=>'invalid_video_url','message'=>'Threads가 읽을 수 있는 HTTPS 영상 URL이 필요합니다. 영상을 다시 업로드해 주세요.'],422);
+}
 
 $verificationWarning = null;
 
 try {
-    // Best-effort product verification before publish. A Toss detail API identifier mismatch
-    // must not block Threads publishing when the product/share link was already imported.
     $productIndex = null;
     $product = null;
     $productId = (int)($post['product_id'] ?? 0);
@@ -71,7 +78,13 @@ try {
         }
     }
 
-    $result = threads_publish_with_comment((string)$post['body'], (string)$post['first_comment'], 15);
+    $result = threads_publish_video_with_comment(
+        (string)$post['body'],
+        $videoUrl,
+        (string)$post['first_comment'],
+        8
+    );
+
     $db = db_read();
     foreach ($db['posts'] as $i => $p) if ((int)$p['id'] === $postId) { $index = $i; break; }
     $db['posts'][$index]['status'] = 'published';
