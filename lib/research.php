@@ -113,9 +113,6 @@ function manmo_benchmark_prompt_block(array $benchmarks): string {
 
 function manmo_product_research_draft(array $product): array {
     $benchmarks = manmo_verified_benchmarks(12);
-    if (count($benchmarks) < 3) {
-        throw new RuntimeException('BENCHMARKS_MISSING: 좋아요 1만 이상으로 검증된 Threads 벤치마크가 3개 이상 필요합니다. 먼저 벤치마크 수집을 실행하세요.');
-    }
 
     $productData = [
         'name' => (string)($product['name'] ?? ''),
@@ -127,14 +124,17 @@ function manmo_product_research_draft(array $product): array {
     ];
     $productJson = json_encode($productData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     $benchmarkBlock = manmo_benchmark_prompt_block($benchmarks);
+    if ($benchmarkBlock === '') {
+        $benchmarkBlock = '[현재 Meta 앱 검수 대기 중이라 검증된 Threads 벤치마크가 아직 없습니다. 벤치마크를 지어내지 말고 웹 리서치와 일반적인 고품질 Threads 카피 원칙만 사용하세요.]';
+    }
 
     $prompt = <<<PROMPT
 너는 한국 Threads 커머스 콘텐츠 리서처이자 카피라이터다.
 
 목표:
 1) 아래 상품을 실제 인터넷에서 검색해서 사람들이 반복적으로 말하는 좋은 점, 구매 이유, 재구매 이유, 의외의 장점, 자주 나오는 불만을 조사한다.
-2) 아래 Threads 벤치마크는 실제 좋아요 10,000개 이상으로 검증된 글이다. 문장을 복사하지 말고, 왜 멈춰 읽게 되는지 구조만 분석한다.
-3) 상품 리서치에서 확인된 실제 장점/호기심과, 벤치마크에서 추출한 바이럴 구조를 결합해 Threads 초안을 만든다.
+2) 아래 Threads 벤치마크가 제공된 경우 문장을 복사하지 말고, 왜 멈춰 읽게 되는지 구조만 분석한다. 벤치마크가 없다고 명시되어 있으면 절대 가짜 벤치마크를 만들지 않는다.
+3) 상품 리서치에서 확인된 실제 장점/호기심과, 사용 가능한 경우 벤치마크에서 추출한 바이럴 구조를 결합해 Threads 초안을 만든다.
 
 절대 규칙:
 - 웹 검색을 반드시 사용한다.
@@ -148,12 +148,12 @@ function manmo_product_research_draft(array $product): array {
 - 제품명은 첫 문장에 꼭 공개할 필요 없다. 궁금증을 남길 수 있으면 뒤로 미룬다.
 - 사람 말투처럼 짧은 문단, 자연스러운 반말/구어체를 사용한다.
 - 댓글 링크를 보게 만드는 이유가 있어야 한다. 단순히 '댓글 확인'만 반복하지 않는다.
-- 벤치마크 원문을 8단어 이상 연속으로 복사하지 않는다.
+- 벤치마크 원문이 제공된 경우 8단어 이상 연속으로 복사하지 않는다.
 
 상품:
 $productJson
 
-좋아요 1만+ Threads 벤치마크:
+Threads 벤치마크:
 $benchmarkBlock
 
 반드시 아래 JSON 하나만 출력해라. 마크다운 코드블록 금지.
