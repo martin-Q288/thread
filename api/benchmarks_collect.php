@@ -10,28 +10,29 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_response(['error'=>'method_not_a
 require_admin();
 $body = request_json();
 
-// MANMO audience identity: Korean women in their 20s-40s, especially a 31-year-old
-// solo-living persona interested in saving food/living costs, convenient meals,
-// tasty diet foods, kitchen/living products and purchase-worthy deals.
+// MANMO audience: Korean women in their 20s-40s. Core persona remains a 31-year-old
+// solo-living woman, but discovery is intentionally broader than food/saving: beauty,
+// Daiso-style finds, stationery, cute lifestyle goods, tech accessories, home, travel,
+// diet, convenient meals and visual-demo products.
 $queries = $body['queries'] ?? [
-    '자취 식비 절약',
+    '다이소 추천템',
+    '다이소 신상',
+    '올리브영 추천',
+    '뷰티 추천템',
+    '향수 추천',
+    '문구 추천',
+    '귀여운 소품',
+    '신박한 아이템',
+    '에어팟 케이스',
+    '테크 액세서리',
     '자취생 추천템',
-    '생활비 절약템',
-    '맛있는 다이어트',
-    '다이어트 간식 추천',
-    '간편식 추천',
-    '냉동식품 추천',
     '주방 꿀템',
     '살림템 추천',
+    '맛있는 다이어트',
+    '간편식 추천',
     '재구매템',
-    '가성비 추천',
-    '특가 추천',
-    '할인 중',
-    '댓글 링크',
-    '공구 추천',
-    '이거 왜 이제 샀지',
 ];
-if (!is_array($queries) || !$queries) $queries = ['자취 식비 절약','생활비 절약템','맛있는 다이어트','주방 꿀템'];
+if (!is_array($queries) || !$queries) $queries = ['다이소 추천템','뷰티 추천템','귀여운 소품','자취생 추천템'];
 $perQuery = max(5, min(30, (int)($body['limit_per_query'] ?? 15)));
 $openaiVerifyLimit = max(0, min(30, (int)($body['openai_verify_limit'] ?? 12)));
 
@@ -62,25 +63,29 @@ function manmo_identity_score(string $text): array {
         'curiosity_gap' => 0,
         'action_intent' => 0,
         'conversion_potential' => 0,
+        'visual_demo' => 0,
     ];
 
-    foreach (['자취','살림','식비','생활비','다이어트','간식','간편식','냉동','주방','집','혼자','1인'] as $w) {
+    foreach (['자취','살림','식비','생활비','다이어트','간식','간편식','냉동','주방','집','혼자','1인','다이소','올리브영','향수','뷰티','화장품','문구','소품','귀여','에어팟','케이스','파우치','정리','수납','여행'] as $w) {
         if (mb_stripos($t, $w) !== false) $scores['target_fit'] += 2;
     }
-    foreach (['제품','상품','추천','샀','구매','재구매','특가','할인','가격','공구','품절','득템','가성비'] as $w) {
+    foreach (['제품','상품','추천','샀','구매','재구매','특가','할인','가격','공구','품절','득템','가성비','신상','입고'] as $w) {
         if (mb_stripos($t, $w) !== false) $scores['commerce_context'] += 2;
     }
-    foreach (['진짜','와 ','헐','미쳤','왜 이제','작정','처음','이거','반칙','말이 안','모르겠'] as $w) {
+    foreach (['진짜','와 ','헐','미쳤','왜 이제','작정','처음','이거','반칙','말이 안','모르겠','보이면','집어','센스','귀여'] as $w) {
         if (mb_stripos($t, $w) !== false) $scores['hook_strength'] += 2;
     }
-    foreach (['왜','이유','근데','알고 보니','의외','따로','뭔지','결국','대체','차이'] as $w) {
+    foreach (['왜','이유','근데','알고 보니','의외','따로','뭔지','결국','대체','차이','뭐야','신기','처음 봄'] as $w) {
         if (mb_stripos($t, $w) !== false) $scores['curiosity_gap'] += 2;
     }
-    foreach (['댓글','링크','프로필','여기서','확인','공유','단톡','사라','사봐'] as $w) {
+    foreach (['댓글','링크','프로필','여기서','확인','공유','단톡','사라','사봐','정보','물어'] as $w) {
         if (mb_stripos($t, $w) !== false) $scores['action_intent'] += 2;
     }
-    foreach (['할인','특가','재구매','추천','가성비','품절','공구','링크','댓글'] as $w) {
+    foreach (['할인','특가','재구매','추천','가성비','품절','공구','링크','댓글','다이소','올리브영','신상'] as $w) {
         if (mb_stripos($t, $w) !== false) $scores['conversion_potential'] += 2;
+    }
+    foreach (['눌러','돌리','열면','닫으면','켜면','빛','색','변해','모양','짤리','갈리','섞','접','펼','쏙','바로','영상','보여','손잡이'] as $w) {
+        if (mb_stripos($t, $w) !== false) $scores['visual_demo'] += 2;
     }
 
     foreach ($scores as $k => $v) $scores[$k] = min(10, $v);
@@ -147,7 +152,6 @@ foreach (array_slice($queries, 0, 16) as $query) {
         if ($text === '') continue;
 
         $identity = manmo_identity_score($text);
-        // Keep a broad enough candidate pool, but require some commercial or MANMO-audience signal.
         if (!threads_commerce_signal($text) && (int)$identity['total'] < 8) continue;
         $commerceCandidates++;
 
@@ -190,9 +194,7 @@ foreach (array_slice($queries, 0, 16) as $query) {
         ];
         $candidates[] = $candidate;
 
-        // Keep the strict 10k benchmark standard for now. We only lower it after search works.
         if ($likes === null || $likes < 10000) continue;
-        // Also require the post to be relevant enough to MANMO's audience/commercial identity.
         if ((int)$identity['total'] < 10) continue;
         $verifiedFound++;
 
