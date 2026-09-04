@@ -49,6 +49,7 @@ $post = db_insert('posts', [
     'research' => $research['research'] ?? [],
     'selected_pattern' => (string)($research['selected_pattern'] ?? ''),
     'pattern_reason' => (string)($research['pattern_reason'] ?? ''),
+    'audience_fit' => is_array($research['audience_fit'] ?? null) ? $research['audience_fit'] : [],
     'video_idea' => is_array($research['video_idea'] ?? null) ? $research['video_idea'] : [],
     'benchmark_patterns' => $research['benchmark_patterns'] ?? [],
     'benchmark_count' => (int)($research['benchmark_count'] ?? 0),
