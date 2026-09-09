@@ -1,0 +1,10 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>현월당 V7</title></head><body><script>
+(async()=>{
+  const r=await fetch('./index.html?v=7.0.0',{cache:'no-store'});
+  let h=await r.text();
+  h=h.replace('./style-v6.css?v=6.0.0','./style-v6.css?v=7.0.0');
+  h=h.replace('./app-v6.js?v=6.0.0','./app-v6.js?v=7.0.0');
+  h=h.replace('</body>','<script type="module" src="./v7-marketing.js?v=7.0.0"><\/script></body>');
+  document.open();document.write(h);document.close();
+})().catch(()=>{document.body.innerHTML='<p style="padding:24px">페이지를 불러오지 못했습니다. 새로고침해주세요.</p>'});
+</script></body></html>
