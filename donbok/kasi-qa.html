@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>현월당 KASI 만세력 QA</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif;margin:0;background:#0b0908;color:#eee2d3}main{max-width:980px;margin:auto;padding:32px 18px}.card{background:#17110e;border:1px solid #4e392f;padding:20px;margin:14px 0}.ok{color:#7ed69b}.bad{color:#ff8d7f}.muted{color:#a99a89;font-size:13px;line-height:1.7}h1{font-size:28px}h2{font-size:18px}.score{font-size:42px;font-weight:900}table{width:100%;border-collapse:collapse;font-size:12px;background:#efe5d5;color:#211813}th,td{padding:8px;border:1px solid #c9b89d;text-align:left}th{background:#dacbb4}.pill{display:inline-block;padding:3px 7px;border-radius:999px;font-weight:800}.pill.ok{background:#17351f}.pill.bad{background:#491b16}details{margin-top:12px}summary{cursor:pointer;font-weight:800}</style>
+</head>
+<body><main>
+<h1>현월당 만세력 · KASI 공식 앵커 QA</h1>
+<p class="muted">한국천문연구원 월력요항의 2026·2027 공개값과 현월당 계산 계층을 직접 비교합니다. 이 페이지는 내부 검증용입니다.</p>
+<div id="summary" class="card"><div>검증 준비 중</div></div>
+<div class="card"><h2>검증 범위</h2><p class="muted">24절기 48건 + 음력 월초 변환 24건 + 해당 날짜 일진 24건 = 총 96건. 이 결과는 2026·2027 공식 앵커에 대한 회귀 검증이며 전체 역사 구간 전수 검증을 의미하지 않습니다.</p></div>
+<div id="tables"></div>
+</main>
+<script type="module">
+import { getSolarTermsOfYear, lunarToSolar, calculateFourPillars, HYEONWOLDANG_MANSE_STANDARD } from './v30-manseryeok-adapter.js';
+import { KASI_TERMS, KASI_LUNAR_MONTH_STARTS, KASI_BASELINE_META } from './kasi-baseline-2026-2027.js';
+
+const rows=[];
+const pad=n=>String(n).padStart(2,'0');
+function kstMinute(date){
+  const p=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(date).filter(x=>x.type!=='literal').map(x=>[x.type,x.value]));
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
+}
+function add(type,label,expected,actual){rows.push({type,label,expected,actual,ok:expected===actual})}
+
+for(const year of [2026,2027]){
+  const actualTerms=getSolarTermsOfYear(year);
+  for(const [name,expected] of KASI_TERMS[year]){
+    const term=actualTerms.find(x=>x.name===name);
+    add('24절기',`${year} ${name}`,expected,term?kstMinute(term.date):'없음');
+  }
+}
+
+for(const [ly,lm,sy,sm,sd,dayGanji] of KASI_LUNAR_MONTH_STARTS){
+  let solar;
+  try{solar=lunarToSolar(ly,lm,1,false)}catch(e){solar=null}
+  const expectedSolar=`${sy}-${pad(sm)}-${pad(sd)}`;
+  const actualSolar=solar?`${solar.year}-${pad(solar.month)}-${pad(solar.day)}`:'오류';
+  add('음양력',`음력 ${ly}.${lm}.1`,expectedSolar,actualSolar);
+
+  let actualDay='오류';
+  try{
+    const r=calculateFourPillars({year:sy,month:sm,day:sd,hour:12,minute:0,gender:'male'});
+    actualDay=`${r.day.heavenlyStem}${r.day.earthlyBranch}`;
+  }catch(e){}
+  add('일진',`${expectedSolar} 일진`,dayGanji,actualDay);
+}
+
+const pass=rows.filter(r=>r.ok).length, total=rows.length, fail=total-pass;
+const summary=document.querySelector('#summary');
+summary.innerHTML=`<div class="score ${fail?'bad':'ok'}">${pass}/${total}</div><b>${fail?'검증 실패 항목이 있습니다':'KASI 앵커 검증 통과'}</b><p class="muted">표준: ${HYEONWOLDANG_MANSE_STANDARD.version} · 기준 출처: ${KASI_BASELINE_META.source}</p>`;
+
+const groups=['24절기','음양력','일진'];
+const mount=document.querySelector('#tables');
+for(const g of groups){
+  const rs=rows.filter(r=>r.type===g), gp=rs.filter(r=>r.ok).length;
+  const box=document.createElement('div');box.className='card';
+  box.innerHTML=`<h2>${g} <span class="${gp===rs.length?'ok':'bad'}">${gp}/${rs.length}</span></h2><details ${gp===rs.length?'':'open'}><summary>상세 결과</summary><div style="overflow:auto"><table><thead><tr><th>항목</th><th>KASI</th><th>현월당</th><th>결과</th></tr></thead><tbody>${rs.map(r=>`<tr><td>${r.label}</td><td>${r.expected}</td><td>${r.actual}</td><td><span class="pill ${r.ok?'ok':'bad'}">${r.ok?'PASS':'FAIL'}</span></td></tr>`).join('')}</tbody></table></div></details>`;
+  mount.appendChild(box);
+}
+</script></body></html>
