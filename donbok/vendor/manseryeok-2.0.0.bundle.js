@@ -15,7 +15,6 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
-var __reExport = (target, mod, secondTarget) => (__copyProps(target, mod, "default"), secondTarget && __copyProps(secondTarget, mod, "default"));
 var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
   // If the importer is in node compatibility mode or this is not an ESM
   // file that has been converted to a CommonJS file using a Babel-
@@ -249,25 +248,25 @@ var require_elements = __commonJS({
   "node_modules/manseryeok/dist/elements.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
-    exports.getHeavenlyStemYinYang = getHeavenlyStemYinYang;
-    exports.getHeavenlyStemElement = getHeavenlyStemElement;
-    exports.getEarthlyBranchYinYang = getEarthlyBranchYinYang;
-    exports.getEarthlyBranchElement = getEarthlyBranchElement;
+    exports.getHeavenlyStemYinYang = getHeavenlyStemYinYang2;
+    exports.getHeavenlyStemElement = getHeavenlyStemElement2;
+    exports.getEarthlyBranchYinYang = getEarthlyBranchYinYang2;
+    exports.getEarthlyBranchElement = getEarthlyBranchElement2;
     var constants_1 = require_constants();
     var validation_1 = require_validation();
-    function getHeavenlyStemYinYang(stem) {
+    function getHeavenlyStemYinYang2(stem) {
       (0, validation_1.assertHeavenlyStem)(stem);
       return constants_1.HEAVENLY_STEMS.indexOf(stem) % 2 === 0 ? "\uC591" : "\uC74C";
     }
-    function getHeavenlyStemElement(stem) {
+    function getHeavenlyStemElement2(stem) {
       (0, validation_1.assertHeavenlyStem)(stem);
       return constants_1.STEM_ELEMENTS[constants_1.HEAVENLY_STEMS.indexOf(stem)];
     }
-    function getEarthlyBranchYinYang(branch) {
+    function getEarthlyBranchYinYang2(branch) {
       (0, validation_1.assertEarthlyBranch)(branch);
       return constants_1.EARTHLY_BRANCHES.indexOf(branch) % 2 === 0 ? "\uC591" : "\uC74C";
     }
-    function getEarthlyBranchElement(branch) {
+    function getEarthlyBranchElement2(branch) {
       (0, validation_1.assertEarthlyBranch)(branch);
       return constants_1.BRANCH_ELEMENTS[constants_1.EARTHLY_BRANCHES.indexOf(branch)];
     }
@@ -1036,8 +1035,8 @@ var require_convert = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.isValidSolarDate = isValidSolarDate;
-    exports.lunarToSolar = lunarToSolar;
-    exports.solarToLunar = solarToLunar;
+    exports.lunarToSolar = lunarToSolar2;
+    exports.solarToLunar = solarToLunar2;
     var lunar_data_1 = require_lunar_data();
     var validation_1 = require_validation();
     var MS_PER_DAY = 864e5;
@@ -1051,7 +1050,7 @@ var require_convert = __commonJS({
       const d = new Date(Date.UTC(year, month - 1, day));
       return d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day;
     }
-    function lunarToSolar(year, month, day, isLeapMonth) {
+    function lunarToSolar2(year, month, day, isLeapMonth) {
       (0, validation_1.assertIntegerInRange)(year, lunar_data_1.LUNAR_MIN_YEAR, lunar_data_1.LUNAR_MAX_YEAR, "\uC74C\uB825 \uC5F0\uB3C4(year)");
       (0, validation_1.assertIntegerInRange)(month, 1, 12, "\uC74C\uB825 \uC6D4(month)");
       (0, validation_1.assertBoolean)(isLeapMonth, "\uC724\uB2EC \uC5EC\uBD80(isLeapMonth)");
@@ -1082,7 +1081,7 @@ var require_convert = __commonJS({
         day: solar.getUTCDate()
       };
     }
-    function solarToLunar(year, month, day) {
+    function solarToLunar2(year, month, day) {
       if (!isValidSolarDate(year, month, day)) {
         throw new RangeError(`\uC720\uD6A8\uD558\uC9C0 \uC54A\uC740 \uC591\uB825 \uB0A0\uC9DC\uC785\uB2C8\uB2E4: ${year}-${month}-${day}`);
       }
@@ -1276,12 +1275,12 @@ var require_sun_longitude = __commonJS({
     function solarElements(jd) {
       const T = (jd - 2451545) / 36525;
       const L0 = normalizeDegrees(280.46646 + 36000.76983 * T + 3032e-7 * T * T);
-      const M = 357.52911 + 35999.05029 * T - 1537e-7 * T * T;
+      const M2 = 357.52911 + 35999.05029 * T - 1537e-7 * T * T;
       const e = 0.016708634 - 42037e-9 * T - 1267e-10 * T * T;
-      const Mrad = M * DEG2RAD;
+      const Mrad = M2 * DEG2RAD;
       const C = (1.914602 - 4817e-6 * T - 14e-6 * T * T) * Math.sin(Mrad) + (0.019993 - 101e-6 * T) * Math.sin(2 * Mrad) + 289e-6 * Math.sin(3 * Mrad);
       const epsilon0 = 23 + 26 / 60 + 21.448 / 3600 - 46.815 / 3600 * T - 59e-5 / 3600 * T * T + 1813e-6 / 3600 * T * T * T;
-      return { L0, M, e, C, epsilon: epsilon0, T };
+      return { L0, M: M2, e, C, epsilon: epsilon0, T };
     }
     function apparentSolarLongitude(ms) {
       const jd = julianDayFromMs(ms);
@@ -1293,11 +1292,11 @@ var require_sun_longitude = __commonJS({
     }
     function equationOfTimeMinutes(ms) {
       const jd = julianDayFromMs(ms);
-      const { L0, M, e, epsilon } = solarElements(jd);
+      const { L0, M: M2, e, epsilon } = solarElements(jd);
       const epsRad = epsilon * DEG2RAD;
       const y = Math.tan(epsRad / 2) ** 2;
       const L0rad = L0 * DEG2RAD;
-      const Mrad = M * DEG2RAD;
+      const Mrad = M2 * DEG2RAD;
       const E = y * Math.sin(2 * L0rad) - 2 * e * Math.sin(Mrad) + 4 * e * y * Math.sin(Mrad) * Math.cos(2 * L0rad) - 0.5 * y * y * Math.sin(4 * L0rad) - 1.25 * e * e * Math.sin(2 * Mrad);
       return E * RAD2DEG * 4;
     }
@@ -1436,8 +1435,8 @@ var require_solar_terms = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.SOLAR_TERM_NAMES_HANJA = exports.SOLAR_TERM_NAMES = void 0;
     exports.solarTermInstantMs = solarTermInstantMs;
-    exports.getSolarTerm = getSolarTerm;
-    exports.getSolarTermsOfYear = getSolarTermsOfYear;
+    exports.getSolarTerm = getSolarTerm2;
+    exports.getSolarTermsOfYear = getSolarTermsOfYear2;
     exports.sajuYearForInstant = sajuYearForInstant;
     exports.sajuMonthForInstant = sajuMonthForInstant;
     var sun_longitude_1 = require_sun_longitude();
@@ -1521,7 +1520,7 @@ var require_solar_terms = __commonJS({
       SOLAR_TERM_CACHE.set(cacheKey, instantMs);
       return instantMs;
     }
-    function getSolarTerm(year, index) {
+    function getSolarTerm2(year, index) {
       const ms = solarTermInstantMs(year, index);
       return {
         index,
@@ -1530,8 +1529,8 @@ var require_solar_terms = __commonJS({
         date: new Date(ms)
       };
     }
-    function getSolarTermsOfYear(year) {
-      return Array.from({ length: 24 }, (_, i) => getSolarTerm(year, i));
+    function getSolarTermsOfYear2(year) {
+      return Array.from({ length: 24 }, (_, i) => getSolarTerm2(year, i));
     }
     function sajuYearForInstant(instantMs, calendarYear) {
       (0, validation_1.assertFiniteNumber)(instantMs, "\uC808\uB300 \uC21C\uAC04(instantMs)");
@@ -1653,13 +1652,13 @@ var require_ten_gods = __commonJS({
   "node_modules/manseryeok/dist/features/ten-gods.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
-    exports.getTenGod = getTenGod;
-    exports.getBranchTenGod = getBranchTenGod;
-    exports.getTenGodChart = getTenGodChart;
+    exports.getTenGod = getTenGod2;
+    exports.getBranchTenGod = getBranchTenGod2;
+    exports.getTenGodChart = getTenGodChart2;
     var constants_1 = require_constants();
     var elements_1 = require_elements();
     var validation_1 = require_validation();
-    function getTenGod(dayMaster, target) {
+    function getTenGod2(dayMaster, target) {
       const dayEl = (0, elements_1.getHeavenlyStemElement)(dayMaster);
       const targetEl = (0, elements_1.getHeavenlyStemElement)(target);
       const sameYinYang = (0, elements_1.getHeavenlyStemYinYang)(dayMaster) === (0, elements_1.getHeavenlyStemYinYang)(target);
@@ -1677,28 +1676,28 @@ var require_ten_gods = __commonJS({
       }
       return sameYinYang ? "\uD3B8\uC778" : "\uC815\uC778";
     }
-    function getBranchTenGod(dayMaster, branch) {
+    function getBranchTenGod2(dayMaster, branch) {
       (0, validation_1.assertEarthlyBranch)(branch);
-      return getTenGod(dayMaster, constants_1.BRANCH_MAIN_STEM[branch]);
+      return getTenGod2(dayMaster, constants_1.BRANCH_MAIN_STEM[branch]);
     }
-    function getTenGodChart(pillars) {
+    function getTenGodChart2(pillars) {
       const dayMaster = pillars.day.heavenlyStem;
       return {
         year: {
-          stem: getTenGod(dayMaster, pillars.year.heavenlyStem),
-          branch: getBranchTenGod(dayMaster, pillars.year.earthlyBranch)
+          stem: getTenGod2(dayMaster, pillars.year.heavenlyStem),
+          branch: getBranchTenGod2(dayMaster, pillars.year.earthlyBranch)
         },
         month: {
-          stem: getTenGod(dayMaster, pillars.month.heavenlyStem),
-          branch: getBranchTenGod(dayMaster, pillars.month.earthlyBranch)
+          stem: getTenGod2(dayMaster, pillars.month.heavenlyStem),
+          branch: getBranchTenGod2(dayMaster, pillars.month.earthlyBranch)
         },
         day: {
           stem: "\uC77C\uAC04",
-          branch: getBranchTenGod(dayMaster, pillars.day.earthlyBranch)
+          branch: getBranchTenGod2(dayMaster, pillars.day.earthlyBranch)
         },
         hour: {
-          stem: getTenGod(dayMaster, pillars.hour.heavenlyStem),
-          branch: getBranchTenGod(dayMaster, pillars.hour.earthlyBranch)
+          stem: getTenGod2(dayMaster, pillars.hour.heavenlyStem),
+          branch: getBranchTenGod2(dayMaster, pillars.hour.earthlyBranch)
         }
       };
     }
@@ -1710,11 +1709,11 @@ var require_void_branches = __commonJS({
   "node_modules/manseryeok/dist/features/void-branches.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
-    exports.getVoidBranches = getVoidBranches;
+    exports.getVoidBranches = getVoidBranches2;
     var constants_1 = require_constants();
     var ganji_1 = require_ganji();
     var validation_1 = require_validation();
-    function getVoidBranches(dayStem, dayBranch) {
+    function getVoidBranches2(dayStem, dayBranch) {
       (0, validation_1.assertHeavenlyStem)(dayStem, "\uC77C\uAC04(dayStem)");
       (0, validation_1.assertEarthlyBranch)(dayBranch, "\uC77C\uC9C0(dayBranch)");
       const dayGanji = (0, ganji_1.ganjiIndexOf)(constants_1.HEAVENLY_STEMS.indexOf(dayStem), constants_1.EARTHLY_BRANCHES.indexOf(dayBranch));
@@ -1732,7 +1731,7 @@ var require_luck_pillars = __commonJS({
   "node_modules/manseryeok/dist/features/luck-pillars.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
-    exports.getLuckPillars = getLuckPillars;
+    exports.getLuckPillars = getLuckPillars2;
     var constants_1 = require_constants();
     var ganji_1 = require_ganji();
     var solar_terms_1 = require_solar_terms();
@@ -1748,7 +1747,7 @@ var require_luck_pillars = __commonJS({
       }
       return result.sort((a, b) => a - b);
     }
-    function getLuckPillars(params) {
+    function getLuckPillars2(params) {
       const { instantUTCms, birthYear, monthPillar, sajuYearStemIndex, gender, count = 10 } = params;
       (0, validation_1.assertFiniteNumber)(instantUTCms, "\uCD9C\uC0DD \uC808\uB300 \uC21C\uAC04(instantUTCms)");
       (0, validation_1.assertIntegerInRange)(birthYear, 101, 9998, "\uC785\uB825 \uC591\uB825 \uC5F0\uB3C4(birthYear)");
@@ -1804,8 +1803,8 @@ var require_dist = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DEFAULT_LONGITUDE = exports.getLuckPillars = exports.getVoidBranches = exports.getTenGodChart = exports.getBranchTenGod = exports.getTenGod = exports.equationOfTimeMinutes = exports.apparentSolarLongitude = exports.SOLAR_TERM_NAMES_HANJA = exports.SOLAR_TERM_NAMES = exports.getSolarTermsOfYear = exports.getSolarTerm = exports.LUNAR_MAX_YEAR = exports.LUNAR_MIN_YEAR = exports.isValidSolarDate = exports.solarToLunar = exports.lunarToSolar = exports.getEarthlyBranchElement = exports.getEarthlyBranchYinYang = exports.getHeavenlyStemElement = exports.getHeavenlyStemYinYang = exports.TEN_GOD_HANJA = exports.FIVE_ELEMENTS = exports.YIN_YANG = exports.EARTHLY_BRANCHES_HANJA = exports.EARTHLY_BRANCHES = exports.HEAVENLY_STEMS_HANJA = exports.HEAVENLY_STEMS = void 0;
-    exports.calculateFourPillars = calculateFourPillars;
-    exports.fourPillarsToString = fourPillarsToString;
+    exports.calculateFourPillars = calculateFourPillars2;
+    exports.fourPillarsToString = fourPillarsToString2;
     var constants_1 = require_constants();
     var elements_1 = require_elements();
     var convert_1 = require_convert();
@@ -1979,7 +1978,7 @@ var require_dist = __commonJS({
         branch: (0, elements_1.getEarthlyBranchYinYang)(pillar.earthlyBranch)
       };
     }
-    function calculateFourPillars(birthInfo) {
+    function calculateFourPillars2(birthInfo) {
       validateBirthInfo(birthInfo);
       const { hour, minute } = birthInfo;
       let { year, month, day } = birthInfo;
@@ -2040,7 +2039,7 @@ var require_dist = __commonJS({
         voidBranches,
         luckPillars,
         toString() {
-          return fourPillarsToString(fourPillars);
+          return fourPillarsToString2(fourPillars);
         },
         toObject() {
           return { year: yearString, month: monthString, day: dayString, hour: hourString };
@@ -2058,7 +2057,7 @@ var require_dist = __commonJS({
         }
       };
     }
-    function fourPillarsToString(fourPillars) {
+    function fourPillarsToString2(fourPillars) {
       const { year, month, day, hour } = fourPillars;
       (0, validation_1.assertPillar)(year, "year");
       (0, validation_1.assertPillar)(month, "month");
@@ -2075,8 +2074,39 @@ var require_dist = __commonJS({
 });
 
 // manseryeok-entry.mjs
-var manseryeok_entry_exports = {};
-__reExport(manseryeok_entry_exports, __toESM(require_dist(), 1));
+var import_manseryeok = __toESM(require_dist(), 1);
+var calculateFourPillars = import_manseryeok.default.calculateFourPillars;
+var getTenGod = import_manseryeok.default.getTenGod;
+var getBranchTenGod = import_manseryeok.default.getBranchTenGod;
+var getTenGodChart = import_manseryeok.default.getTenGodChart;
+var getLuckPillars = import_manseryeok.default.getLuckPillars;
+var getVoidBranches = import_manseryeok.default.getVoidBranches;
+var solarToLunar = import_manseryeok.default.solarToLunar;
+var lunarToSolar = import_manseryeok.default.lunarToSolar;
+var getSolarTerm = import_manseryeok.default.getSolarTerm;
+var getSolarTermsOfYear = import_manseryeok.default.getSolarTermsOfYear;
+var getHeavenlyStemElement = import_manseryeok.default.getHeavenlyStemElement;
+var getEarthlyBranchElement = import_manseryeok.default.getEarthlyBranchElement;
+var getHeavenlyStemYinYang = import_manseryeok.default.getHeavenlyStemYinYang;
+var getEarthlyBranchYinYang = import_manseryeok.default.getEarthlyBranchYinYang;
+var fourPillarsToString = import_manseryeok.default.fourPillarsToString;
+export {
+  calculateFourPillars,
+  fourPillarsToString,
+  getBranchTenGod,
+  getEarthlyBranchElement,
+  getEarthlyBranchYinYang,
+  getHeavenlyStemElement,
+  getHeavenlyStemYinYang,
+  getLuckPillars,
+  getSolarTerm,
+  getSolarTermsOfYear,
+  getTenGod,
+  getTenGodChart,
+  getVoidBranches,
+  lunarToSolar,
+  solarToLunar
+};
 /*! Bundled license information:
 
 manseryeok/dist/index.js:
