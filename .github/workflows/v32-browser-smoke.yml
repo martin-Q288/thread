@@ -1,0 +1,73 @@
+name: V32 browser smoke test
+
+on:
+  push:
+    branches:
+      - donbok-mvp
+    paths:
+      - .github/workflows/v32-browser-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: donbok-mvp
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Serve site
+        run: |
+          python3 -m http.server 4173 --directory donbok >/tmp/hyun-http.log 2>&1 &
+          echo $! >/tmp/hyun-http.pid
+          sleep 2
+
+      - name: Run V32 flow
+        run: |
+          cat > /tmp/v32-smoke.mjs <<'EOF'
+          import { chromium } from 'playwright';
+          const browser=await chromium.launch({headless:true});
+          const page=await browser.newPage({viewport:{width:390,height:844}});
+          const errors=[];
+          page.on('console',m=>{ if(m.type()==='error') errors.push('console: '+m.text()); });
+          page.on('pageerror',e=>errors.push('pageerror: '+e.message));
+          page.on('requestfailed',r=>errors.push('requestfailed: '+r.url()+' '+(r.failure()?.errorText||'')));
+
+          await page.goto('http://127.0.0.1:4173/v32.html?test=1',{waitUntil:'domcontentloaded'});
+          await page.waitForSelector('#tm23Badge');
+          const badge=(await page.locator('#tm23Badge').innerText()).trim();
+          if(!badge.includes('V32')) throw new Error('V32 badge missing: '+badge);
+
+          await page.click('#enterBtn');
+          await page.fill('#name','테스트');
+          await page.fill('#year','1992');
+          await page.fill('#month','10');
+          await page.fill('#day','24');
+          await page.selectOption('#hour','12');
+          await page.fill('#minute','0');
+          await page.click('#submitBtn');
+
+          await page.waitForSelector('#result:not(.hide)',{timeout:45000});
+          const reading=await page.locator('#readingMount').innerText();
+          if(reading.trim().length<50) throw new Error('readingMount too short: '+reading.length);
+          if(errors.length) console.log('Nonfatal browser errors:\n'+errors.join('\n'));
+          console.log('PASS V32');
+          console.log('badge='+badge);
+          console.log('readingChars='+reading.length);
+          await browser.close();
+          EOF
+          node /tmp/v32-smoke.mjs
