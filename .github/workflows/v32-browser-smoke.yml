@@ -1,4 +1,4 @@
-name: V33 core browser smoke test
+name: V34 full browser smoke test
 
 on:
   push:
@@ -36,11 +36,11 @@ jobs:
           python3 -m http.server 4173 --directory donbok >/tmp/hyun-http.log 2>&1 &
           sleep 2
 
-      - name: Run V33 core flow
+      - name: Run V34 full flow
         run: |
-          cat > v33-smoke.mjs <<'EOF'
+          cat > v34-smoke.mjs <<'EOF'
           import { chromium } from 'playwright';
-          const hard=setTimeout(()=>{console.error('HARD TIMEOUT V33');process.exit(2)},30000);
+          const hard=setTimeout(()=>{console.error('HARD TIMEOUT V34');process.exit(2)},40000);
           const browser=await chromium.launch({headless:true});
           const page=await browser.newPage({viewport:{width:390,height:844}});
           page.setDefaultTimeout(10000);
@@ -48,9 +48,11 @@ jobs:
           page.on('pageerror',e=>console.log('PAGEERROR '+e.message));
           page.on('requestfailed',r=>console.log('REQFAIL '+r.url()+' '+(r.failure()?.errorText||'')));
 
-          await page.goto('http://127.0.0.1:4173/v33.html?test=1',{waitUntil:'domcontentloaded'});
-          const badge=(await page.locator('#v33Badge').innerText()).trim();
+          await page.goto('http://127.0.0.1:4173/v34.html?test=1',{waitUntil:'domcontentloaded'});
+          const badge=(await page.locator('#tm23Badge').innerText()).trim();
           console.log('badge='+badge);
+          if(!badge.includes('V34'))throw new Error('wrong build '+badge);
+
           await page.click('#enterBtn');
           await page.fill('#name','테스트');
           await page.fill('#year','1992');
@@ -58,15 +60,32 @@ jobs:
           await page.fill('#day','24');
           await page.selectOption('#hour','12');
           await page.fill('#minute','0');
+
           console.log('click submit');
           await page.click('#submitBtn');
           console.log('submit clicked');
           await page.waitForSelector('#result:not(.hide)',{timeout:20000});
+          console.log('result visible');
+
+          await page.waitForSelector('#readingMount[data-v16="1"]',{timeout:8000});
+          console.log('v16 enriched');
+          await page.waitForSelector('#manseryeok22',{timeout:8000});
+          console.log('manseryeok visible');
+          await page.waitForSelector('#tm23Bar',{timeout:8000});
+          console.log('test toolbar visible');
+
+          const responsive=await Promise.race([
+            page.evaluate(()=>({ok:1+1===2,title:document.title,result:!document.querySelector('#result')?.classList.contains('hide')})),
+            new Promise((_,reject)=>setTimeout(()=>reject(new Error('renderer unresponsive')),5000))
+          ]);
+          console.log('responsive='+JSON.stringify(responsive));
+
           const reading=await page.locator('#readingMount').innerText();
           console.log('readingChars='+reading.length);
-          if(reading.trim().length<50) throw new Error('reading too short');
-          console.log('PASS V33 CORE');
+          if(reading.trim().length<100)throw new Error('reading too short');
+
+          console.log('PASS V34 FULL');
           clearTimeout(hard);
           process.exit(0);
           EOF
-          node v33-smoke.mjs
+          node v34-smoke.mjs
