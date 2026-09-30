@@ -38,7 +38,7 @@ jobs:
 
       - name: Run V32 flow
         run: |
-          cat > /tmp/v32-smoke.mjs <<'EOF'
+          cat > v32-smoke.mjs <<'EOF'
           import { chromium } from 'playwright';
           const browser=await chromium.launch({headless:true});
           const page=await browser.newPage({viewport:{width:390,height:844}});
@@ -70,4 +70,4 @@ jobs:
           console.log('readingChars='+reading.length);
           await browser.close();
           EOF
-          node /tmp/v32-smoke.mjs
+          node v32-smoke.mjs
