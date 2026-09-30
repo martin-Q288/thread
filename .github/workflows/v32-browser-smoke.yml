@@ -61,7 +61,22 @@ jobs:
           await page.fill('#minute','0');
           await page.click('#submitBtn');
 
-          await page.waitForSelector('#result:not(.hide)',{timeout:45000});
+          try {
+            await page.waitForSelector('#result:not(.hide)',{timeout:15000});
+          } catch (e) {
+            const boot=await page.locator('#boot32').count()?await page.locator('#boot32').innerText():'<none>';
+            const loading=await page.locator('#loading').getAttribute('class');
+            const landing=await page.locator('#landing').getAttribute('class');
+            const resultClass=await page.locator('#result').getAttribute('class');
+            console.log('DIAG boot32='+boot);
+            console.log('DIAG loadingClass='+loading);
+            console.log('DIAG landingClass='+landing);
+            console.log('DIAG resultClass='+resultClass);
+            console.log('DIAG engineReady='+await page.evaluate(()=>String(window.__HYUN_V32_ENGINE_READY)));
+            console.log('DIAG engineError='+await page.evaluate(()=>String(window.__HYUN_V32_ENGINE_ERROR)));
+            console.log('DIAG errors=\n'+errors.join('\n'));
+            throw e;
+          }
           const reading=await page.locator('#readingMount').innerText();
           if(reading.trim().length<50) throw new Error('readingMount too short: '+reading.length);
           if(errors.length) console.log('Nonfatal browser errors:\n'+errors.join('\n'));
