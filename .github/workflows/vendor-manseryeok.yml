@@ -1,0 +1,47 @@
+name: Vendor manseryeok browser bundle
+
+on:
+  push:
+    branches:
+      - donbok-mvp
+    paths:
+      - .github/workflows/vendor-manseryeok.yml
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: donbok-mvp
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build browser ESM bundle
+        run: |
+          mkdir -p donbok/vendor
+          cat > /tmp/manseryeok-entry.mjs <<'EOF'
+          export * from 'manseryeok';
+          EOF
+          cd /tmp
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund manseryeok@2.0.0 esbuild@0.25.10
+          ./node_modules/.bin/esbuild /tmp/manseryeok-entry.mjs             --bundle             --platform=browser             --format=esm             --target=es2020             --outfile="$GITHUB_WORKSPACE/donbok/vendor/manseryeok-2.0.0.bundle.js"
+          cd "$GITHUB_WORKSPACE"
+          printf '\n/* Bundled from manseryeok@2.0.0 (MIT) for stable browser delivery. */\n' >> donbok/vendor/manseryeok-2.0.0.bundle.js
+
+      - name: Commit bundle
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add donbok/vendor/manseryeok-2.0.0.bundle.js
+          git diff --cached --quiet && exit 0
+          git commit -m "Vendor manseryeok browser bundle"
+          git push origin donbok-mvp
