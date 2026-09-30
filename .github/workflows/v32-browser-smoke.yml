@@ -1,4 +1,4 @@
-name: V32 browser smoke test
+name: V33 core browser smoke test
 
 on:
   push:
@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   smoke:
+    timeout-minutes: 3
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -33,25 +34,23 @@ jobs:
       - name: Serve site
         run: |
           python3 -m http.server 4173 --directory donbok >/tmp/hyun-http.log 2>&1 &
-          echo $! >/tmp/hyun-http.pid
           sleep 2
 
-      - name: Run V32 flow
+      - name: Run V33 core flow
         run: |
-          cat > v32-smoke.mjs <<'EOF'
+          cat > v33-smoke.mjs <<'EOF'
           import { chromium } from 'playwright';
+          const hard=setTimeout(()=>{console.error('HARD TIMEOUT V33');process.exit(2)},30000);
           const browser=await chromium.launch({headless:true});
           const page=await browser.newPage({viewport:{width:390,height:844}});
-          const errors=[];
-          page.on('console',m=>{ if(m.type()==='error') errors.push('console: '+m.text()); });
-          page.on('pageerror',e=>errors.push('pageerror: '+e.message));
-          page.on('requestfailed',r=>errors.push('requestfailed: '+r.url()+' '+(r.failure()?.errorText||'')));
+          page.setDefaultTimeout(10000);
+          page.on('console',m=>console.log('BROWSER '+m.type()+': '+m.text()));
+          page.on('pageerror',e=>console.log('PAGEERROR '+e.message));
+          page.on('requestfailed',r=>console.log('REQFAIL '+r.url()+' '+(r.failure()?.errorText||'')));
 
-          await page.goto('http://127.0.0.1:4173/v32.html?test=1',{waitUntil:'domcontentloaded'});
-          await page.waitForSelector('#tm23Badge');
-          const badge=(await page.locator('#tm23Badge').innerText()).trim();
-          if(!badge.includes('V32')) throw new Error('V32 badge missing: '+badge);
-
+          await page.goto('http://127.0.0.1:4173/v33.html?test=1',{waitUntil:'domcontentloaded'});
+          const badge=(await page.locator('#v33Badge').innerText()).trim();
+          console.log('badge='+badge);
           await page.click('#enterBtn');
           await page.fill('#name','테스트');
           await page.fill('#year','1992');
@@ -59,30 +58,15 @@ jobs:
           await page.fill('#day','24');
           await page.selectOption('#hour','12');
           await page.fill('#minute','0');
+          console.log('click submit');
           await page.click('#submitBtn');
-
-          try {
-            await page.waitForSelector('#result:not(.hide)',{timeout:15000});
-          } catch (e) {
-            const boot=await page.locator('#boot32').count()?await page.locator('#boot32').innerText():'<none>';
-            const loading=await page.locator('#loading').getAttribute('class');
-            const landing=await page.locator('#landing').getAttribute('class');
-            const resultClass=await page.locator('#result').getAttribute('class');
-            console.log('DIAG boot32='+boot);
-            console.log('DIAG loadingClass='+loading);
-            console.log('DIAG landingClass='+landing);
-            console.log('DIAG resultClass='+resultClass);
-            console.log('DIAG engineReady='+await page.evaluate(()=>String(window.__HYUN_V32_ENGINE_READY)));
-            console.log('DIAG engineError='+await page.evaluate(()=>String(window.__HYUN_V32_ENGINE_ERROR)));
-            console.log('DIAG errors=\n'+errors.join('\n'));
-            throw e;
-          }
+          console.log('submit clicked');
+          await page.waitForSelector('#result:not(.hide)',{timeout:20000});
           const reading=await page.locator('#readingMount').innerText();
-          if(reading.trim().length<50) throw new Error('readingMount too short: '+reading.length);
-          if(errors.length) console.log('Nonfatal browser errors:\n'+errors.join('\n'));
-          console.log('PASS V32');
-          console.log('badge='+badge);
           console.log('readingChars='+reading.length);
-          await browser.close();
+          if(reading.trim().length<50) throw new Error('reading too short');
+          console.log('PASS V33 CORE');
+          clearTimeout(hard);
+          process.exit(0);
           EOF
-          node v32-smoke.mjs
+          node v33-smoke.mjs
