@@ -28,7 +28,22 @@ jobs:
         run: |
           mkdir -p donbok/vendor
           cat > /tmp/manseryeok-entry.mjs <<'EOF'
-          export * from 'manseryeok';
+          import M from 'manseryeok';
+          export const calculateFourPillars = M.calculateFourPillars;
+          export const getTenGod = M.getTenGod;
+          export const getBranchTenGod = M.getBranchTenGod;
+          export const getTenGodChart = M.getTenGodChart;
+          export const getLuckPillars = M.getLuckPillars;
+          export const getVoidBranches = M.getVoidBranches;
+          export const solarToLunar = M.solarToLunar;
+          export const lunarToSolar = M.lunarToSolar;
+          export const getSolarTerm = M.getSolarTerm;
+          export const getSolarTermsOfYear = M.getSolarTermsOfYear;
+          export const getHeavenlyStemElement = M.getHeavenlyStemElement;
+          export const getEarthlyBranchElement = M.getEarthlyBranchElement;
+          export const getHeavenlyStemYinYang = M.getHeavenlyStemYinYang;
+          export const getEarthlyBranchYinYang = M.getEarthlyBranchYinYang;
+          export const fourPillarsToString = M.fourPillarsToString;
           EOF
           cd /tmp
           npm init -y >/dev/null 2>&1
